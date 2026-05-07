@@ -7,18 +7,250 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
+// =================================================================
+// USERS — admin + agents
+// =================================================================
 model User {
-  id           String   @id @default(cuid())
-  email        String   @unique
-  name         String
-  passwordHash String
-  role         Role     @default(AGENT)
-  isActive     Boolean  @default(true)
-  createdAt    DateTime @default(now())
-  updatedAt    DateTime @updatedAt
+  id            String    @id @default(cuid())
+  email         String    @unique
+  name          String
+  passwordHash  String
+  role          Role      @default(AGENT)
+  isActive      Boolean   @default(true)
+  onLeaveFrom   DateTime?
+  onLeaveUntil  DateTime?
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+  deletedAt     DateTime?
+
+  ownedCustomers Customer[]      @relation("CustomerOwner")
+  activities     ActivityLog[]
+  imports        ImportHistory[]
 }
 
 enum Role {
   ADMIN
   AGENT
+}
+
+// =================================================================
+// CUSTOMERS — central entity, keyed by phone
+// =================================================================
+model Customer {
+  id             String        @id @default(cuid())
+  phone          String        @unique          // 10-digit normalized
+  name           String?
+  gender         String?
+  address        String?
+  city           String?
+  sector         String?
+  customerIdExt  String?                        // your "Customer ID" from registration sheet
+  customerType   CustomerType  @default(NEW_REGISTRATION)
+  ownerId        String?
+  owner          User?         @relation("CustomerOwner", fields: [ownerId], references: [id])
+
+  // Do-Not-Contact
+  doNotContact      Boolean   @default(false)
+  doNotContactReason String?
+  doNotContactSetAt  DateTime?
+  doNotContactSetBy  String?
+
+  firstSeenAt    DateTime      @default(now())
+  createdAt      DateTime      @default(now())
+  updatedAt      DateTime      @updatedAt
+  deletedAt      DateTime?
+
+  registrations Registration[]
+  bookings      Booking[]
+  followup      Followup?
+  activities    ActivityLog[]
+
+  @@index([ownerId])
+  @@index([customerType])
+  @@index([doNotContact])
+}
+
+enum CustomerType {
+  NEW_REGISTRATION    // registered, never booked
+  CUSTOMER            // has at least one booking
+}
+
+// =================================================================
+// REGISTRATIONS — historical record of registration events
+// =================================================================
+model Registration {
+  id             String    @id @default(cuid())
+  customerId     String
+  customer       Customer  @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  customerIdExt  String?   @unique             // dedup key from your data
+  onboardingDate DateTime?
+  rawData        Json?
+  createdAt      DateTime  @default(now())
+
+  @@index([customerId])
+}
+
+// =================================================================
+// BOOKINGS — every booking event
+// =================================================================
+model Booking {
+  id                 String    @id @default(cuid())
+  customerId         String
+  customer           Customer  @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  orderNo            String?   @unique          // dedup key from your data
+  aiCallingStatus    String?
+  orderDate          DateTime?
+  bookingDate        DateTime?
+  bookingTime        String?
+  status             String?                    // Completed, Pending, etc.
+  paymentStatus      String?                    // Success, Failed, Partially Paid
+  salonId            String?
+  salon              Salon?    @relation(fields: [salonId], references: [id])
+  salonNameSnapshot  String?                    // in case salon record changes later
+  city               String?
+  state              String?
+  address            String?
+  gst                Decimal?
+  grossAmount        Decimal?
+  stylistDiscount    Decimal?
+  slotsDiscount      Decimal?
+  couponsDiscount    Decimal?
+  offersDiscount     Decimal?
+  hygieneFee         Decimal?
+  platformFee        Decimal?
+  grandTotal         Decimal?
+  tokenAmount        Decimal?
+  remainingAmount    Decimal?
+  gatewayOrderId     String?
+  styleLoungeCoupon  String?
+  salonCoupon        String?
+  styleLoungeUser    String?
+  rawData            Json?
+  createdAt          DateTime  @default(now())
+
+  @@index([customerId])
+  @@index([bookingDate])
+  @@index([salonId])
+  @@index([status])
+}
+
+// =================================================================
+// SALONS — partner salons
+// =================================================================
+model Salon {
+  id          String    @id @default(cuid())
+  externalId  String?   @unique             // your "Salon Id" column
+  name        String
+  phone       String?
+  address     String?
+  city        String?
+  state       String?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  bookings    Booking[]
+
+  @@index([city])
+}
+
+// =================================================================
+// FOLLOWUPS — current state per customer (one row per customer)
+// =================================================================
+model Followup {
+  id                String    @id @default(cuid())
+  customerId        String    @unique
+  customer          Customer  @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  nextFollowupDate  DateTime
+  currentRemark     String?
+  currentNote       String?
+  lastContactedAt   DateTime?
+  lastContactedById String?
+  updatedAt         DateTime  @updatedAt
+  updatedById       String?
+
+  @@index([nextFollowupDate])
+}
+
+// =================================================================
+// ACTIVITY LOG — append-only history
+// =================================================================
+model ActivityLog {
+  id           String       @id @default(cuid())
+  customerId   String
+  customer     Customer     @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  userId       String?
+  user         User?        @relation(fields: [userId], references: [id])
+  activityType ActivityType
+  remark       String?
+  note         String?
+  oldValue     String?
+  newValue     String?
+  createdAt    DateTime     @default(now())
+
+  @@index([customerId, createdAt])
+  @@index([userId, createdAt])
+}
+
+enum ActivityType {
+  REMARK_ADDED
+  NOTE_ADDED
+  FOLLOWUP_DATE_CHANGED
+  OWNER_CHANGED
+  CUSTOMER_IMPORTED
+  REGISTRATION_IMPORTED
+  BOOKING_IMPORTED
+  CUSTOMER_TYPE_CHANGED
+  DNC_FLAGGED
+  DNC_UNFLAGGED
+  CALL_LOGGED
+}
+
+// =================================================================
+// REMARK OPTIONS — your dropdown list, editable from admin UI
+// =================================================================
+model RemarkOption {
+  id              String   @id @default(cuid())
+  label           String   @unique
+  color           String?
+  sortOrder       Int      @default(0)
+  isActive        Boolean  @default(true)
+
+  // Smart-defaults rules (Day 2C uses these)
+  defaultDaysAhead Int?                       // null = no auto-suggestion
+  autoFlagDnc      Boolean  @default(false)   // true for "Invalid Number"
+  closesFollowup   Boolean  @default(false)   // true for "Booked", "Service taken"
+
+  createdAt       DateTime @default(now())
+}
+
+// =================================================================
+// IMPORT HISTORY — every CSV upload logged
+// =================================================================
+model ImportHistory {
+  id            String      @id @default(cuid())
+  importType    ImportType
+  filename      String
+  uploadedById  String
+  uploadedBy    User        @relation(fields: [uploadedById], references: [id])
+  totalRows     Int
+  newCount      Int
+  updatedCount  Int
+  skippedCount  Int
+  errorCount    Int
+  notes         String?
+  createdAt     DateTime    @default(now())
+}
+
+enum ImportType {
+  REGISTRATIONS
+  BOOKINGS
+}
+
+// =================================================================
+// SETTINGS — single-row key/value config
+// =================================================================
+model Setting {
+  key       String   @id
+  value     String
+  updatedAt DateTime @updatedAt
 }
