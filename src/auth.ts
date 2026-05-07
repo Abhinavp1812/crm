@@ -4,7 +4,10 @@ import bcrypt from "bcryptjs";
 import { prisma } from "@/lib/prisma";
 
 export const { handlers, signIn, signOut, auth } = NextAuth({
-  session: { strategy: "jwt" },
+  session: {
+    strategy: "jwt",
+    maxAge: 30 * 24 * 60 * 60, // 30 days (your locked spec)
+  },
   pages: { signIn: "/login" },
   providers: [
     Credentials({
@@ -35,15 +38,15 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
   callbacks: {
     async jwt({ token, user }) {
       if (user) {
-        token.role = (user as { role?: string }).role;
-        token.uid = (user as { id?: string }).id;
+        token.uid = user.id;
+        token.role = user.role;
       }
       return token;
     },
     async session({ session, token }) {
       if (session.user) {
-        (session.user as { id?: string }).id = token.uid as string;
-        (session.user as { role?: string }).role = token.role as string;
+        session.user.id = token.uid as string;
+        session.user.role = token.role as "ADMIN" | "AGENT";
       }
       return session;
     },
