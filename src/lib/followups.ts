@@ -16,20 +16,69 @@ export interface FollowupRow {
   status: "OVERDUE" | "DUE_TODAY" | "UPCOMING";
 }
 
+export interface FollowupCounts {
+  total: number;
+  overdue: number;
+  dueToday: number;
+  registered: number;
+  booked: number;
+}
+
 /**
- * Get follow-ups for a specific user (agent's queue),
- * applying the locked-rule filter:
- *   - Skip DNC customers
- *   - Show overdue + due today
- *   - Hide if contacted today AND follow-up date hasn't moved forward
+ * Get count breakdown for a user — fast, doesn't fetch row data.
  */
-export async function getTodayFollowups(userId: string): Promise<FollowupRow[]> {
+export async function getFollowupCounts(userId: string): Promise<FollowupCounts> {
   const today = new Date();
   today.setHours(0, 0, 0, 0);
   const tomorrow = new Date(today);
   tomorrow.setDate(tomorrow.getDate() + 1);
 
-  // Get all due/overdue followups for this user
+  const baseFilter = {
+    nextFollowupDate: { lt: tomorrow },
+    customer: {
+      ownerId: userId,
+      doNotContact: false,
+      deletedAt: null,
+    },
+  } as const;
+
+  const [total, overdue, registered, booked] = await Promise.all([
+    prisma.followup.count({ where: baseFilter }),
+    prisma.followup.count({
+      where: { ...baseFilter, nextFollowupDate: { lt: today } },
+    }),
+    prisma.followup.count({
+      where: { ...baseFilter, customer: { ...baseFilter.customer, customerType: "NEW_REGISTRATION" } },
+    }),
+    prisma.followup.count({
+      where: { ...baseFilter, customer: { ...baseFilter.customer, customerType: "CUSTOMER" } },
+    }),
+  ]);
+
+  return {
+    total,
+    overdue,
+    dueToday: total - overdue,
+    registered,
+    booked,
+  };
+}
+
+/**
+ * Get a page of followups for a user.
+ * @param page 1-indexed page number
+ * @param pageSize number of rows per page
+ */
+export async function getTodayFollowups(
+  userId: string,
+  page = 1,
+  pageSize = 50
+): Promise<FollowupRow[]> {
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  const tomorrow = new Date(today);
+  tomorrow.setDate(tomorrow.getDate() + 1);
+
   const followups = await prisma.followup.findMany({
     where: {
       nextFollowupDate: { lt: tomorrow },
@@ -62,6 +111,8 @@ export async function getTodayFollowups(userId: string): Promise<FollowupRow[]> 
       },
     },
     orderBy: { nextFollowupDate: "asc" },
+    skip: (page - 1) * pageSize,
+    take: pageSize,
   });
 
   return followups.map((f) => {
@@ -91,25 +142,16 @@ export async function getTodayFollowups(userId: string): Promise<FollowupRow[]> 
   });
 }
 
-/**
- * Format a 10-digit Indian phone for display: 98765 43210
- */
 export function formatPhone(phone: string): string {
   if (!phone || phone.length !== 10) return phone;
-  return `${phone.slice(0, 5)} ${phone.slice(5)}`;
+  return phone;
 }
 
-/**
- * Build wa.me link with optional pre-filled message
- */
 export function whatsappLink(phone: string, message?: string): string {
   const text = message ? `?text=${encodeURIComponent(message)}` : "";
   return `https://wa.me/91${phone}${text}`;
 }
 
-/**
- * Build tel: link
- */
 export function telLink(phone: string): string {
   return `tel:+91${phone}`;
 }

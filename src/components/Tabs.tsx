@@ -1,0 +1,39 @@
+"use client";
+import { useState, ReactNode } from "react";
+
+interface Tab {
+  id: string;
+  label: string;
+  count?: number;
+  content: ReactNode;
+}
+
+export default function Tabs({ tabs, defaultId }: { tabs: Tab[]; defaultId?: string }) {
+  const [activeId, setActiveId] = useState(defaultId || tabs[0]?.id);
+  const active = tabs.find((t) => t.id === activeId) || tabs[0];
+
+  return (
+    <div>
+      <div className="border-b flex gap-1">
+        {tabs.map((t) => (
+          <button
+            key={t.id}
+            onClick={() => setActiveId(t.id)}
+            className={
+              "px-4 py-2 text-sm font-medium border-b-2 transition " +
+              (activeId === t.id
+                ? "border-blue-600 text-blue-700"
+                : "border-transparent text-gray-600 hover:text-gray-900")
+            }
+          >
+            {t.label}
+            {typeof t.count === "number" ? (
+              <span className="ml-1.5 text-xs text-gray-500">({t.count})</span>
+            ) : null}
+          </button>
+        ))}
+      </div>
+      <div className="pt-4">{active?.content}</div>
+    </div>
+  );
+}
