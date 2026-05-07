@@ -2,6 +2,7 @@
 import { redirect } from "next/navigation";
 import {
   getTodayFollowups,
+  getActiveRemarkOptions,
   formatPhone,
   whatsappLink,
   telLink,
@@ -11,6 +12,7 @@ import {
   FollowupStatusBadge,
 } from "@/components/StatusBadge";
 import TopNav from "@/components/TopNav";
+import FollowupEditButton from "@/components/FollowupEditButton";
 import Link from "next/link";
 
 export const dynamic = "force-dynamic";
@@ -19,7 +21,11 @@ export default async function HomePage() {
   const session = await auth();
   if (!session?.user?.id) redirect("/login");
 
-  const followups = await getTodayFollowups(session.user.id);
+  const [followups, remarkOptions] = await Promise.all([
+    getTodayFollowups(session.user.id),
+    getActiveRemarkOptions(),
+  ]);
+
   const overdueCount = followups.filter((f) => f.status === "OVERDUE").length;
   const todayCount = followups.filter((f) => f.status === "DUE_TODAY").length;
   const registeredCount = followups.filter((f) => f.customerType === "NEW_REGISTRATION").length;
@@ -72,7 +78,9 @@ export default async function HomePage() {
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-gray-100">
-                  {followups.slice(0, 200).map((f) => (<FollowupRow key={f.customerId} f={f} />))}
+                  {followups.slice(0, 200).map((f) => (
+                    <FollowupRow key={f.customerId} f={f} remarkOptions={remarkOptions} />
+                  ))}
                 </tbody>
               </table>
               {followups.length > 200 ? (
@@ -88,10 +96,19 @@ export default async function HomePage() {
   );
 }
 
-function FollowupRow({ f }: { f: Awaited<ReturnType<typeof getTodayFollowups>>[number] }) {
+type RemarkOption = Awaited<ReturnType<typeof getActiveRemarkOptions>>[number];
+
+function FollowupRow({
+  f,
+  remarkOptions,
+}: {
+  f: Awaited<ReturnType<typeof getTodayFollowups>>[number];
+  remarkOptions: RemarkOption[];
+}) {
   const lastBookingText = f.lastBookingDate ? new Date(f.lastBookingDate).toLocaleDateString("en-IN") : "-";
   const lastContactText = f.lastContactedAt ? new Date(f.lastContactedAt).toLocaleDateString("en-IN") : "Never";
   const followupText = new Date(f.nextFollowupDate).toLocaleDateString("en-IN");
+  const followupIso = new Date(f.nextFollowupDate).toISOString().slice(0, 10);
   const waMessage = "Hi " + (f.customerName ?? "") + ", this is from Style Lounge.";
 
   return (
@@ -113,9 +130,17 @@ function FollowupRow({ f }: { f: Awaited<ReturnType<typeof getTodayFollowups>>[n
       <td className="px-4 py-3 text-gray-600">{lastContactText}</td>
       <td className="px-4 py-3 text-gray-700">{followupText}</td>
       <td className="px-4 py-3">
-        <div className="flex gap-2">
+        <div className="flex gap-2 flex-wrap">
           <a href={telLink(f.phone)} title="Call" className="inline-flex items-center justify-center px-2 h-8 rounded bg-blue-50 text-blue-700 hover:bg-blue-100 text-xs">Call</a>
           <a href={whatsappLink(f.phone, waMessage)} target="_blank" rel="noopener" title="WhatsApp" className="inline-flex items-center justify-center px-2 h-8 rounded bg-green-50 text-green-700 hover:bg-green-100 text-xs">WA</a>
+          <FollowupEditButton
+            customerId={f.customerId}
+            customerName={f.customerName}
+            currentRemark={f.currentRemark}
+            currentNote={f.currentNote}
+            currentFollowupDate={followupIso}
+            remarkOptions={remarkOptions}
+          />
           <Link href={"/customers/" + f.customerId} title="Open" className="inline-flex items-center justify-center px-2 h-8 rounded bg-gray-100 text-gray-700 hover:bg-gray-200 text-xs">Open</Link>
         </div>
       </td>

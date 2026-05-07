@@ -113,3 +113,16 @@ export function whatsappLink(phone: string, message?: string): string {
 export function telLink(phone: string): string {
   return `tel:+91${phone}`;
 }
+
+export async function getActiveRemarkOptions() {
+  return prisma.remarkOption.findMany({
+    where: { isActive: true },
+    orderBy: { sortOrder: "asc" },
+    select: {
+      label: true,
+      defaultDaysAhead: true,
+      autoFlagDnc: true,
+      closesFollowup: true,
+    },
+  });
+}
