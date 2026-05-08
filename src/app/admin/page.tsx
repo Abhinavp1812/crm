@@ -16,10 +16,28 @@ export default async function AdminPage() {
 
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             <Link
+              href="/admin/customers"
+              className="bg-white p-6 rounded-lg shadow hover:shadow-md transition"
+            >
+              <h2 className="font-semibold text-lg">All Customers</h2>
+              <p className="text-sm text-gray-600 mt-1">
+                Searchable master view with filters
+              </p>
+            </Link>
+            <Link
+              href="/admin/closed-followups"
+              className="bg-white p-6 rounded-lg shadow hover:shadow-md transition"
+            >
+              <h2 className="font-semibold text-lg">Closed Followups</h2>
+              <p className="text-sm text-gray-600 mt-1">
+                Re-engage Not Interested / DNC / Service Taken customers
+              </p>
+            </Link>
+            <Link
               href="/admin/import/registrations"
               className="bg-white p-6 rounded-lg shadow hover:shadow-md transition"
             >
-              <h2 className="font-semibold text-lg">📥 Import Registrations</h2>
+              <h2 className="font-semibold text-lg">Import Registrations</h2>
               <p className="text-sm text-gray-600 mt-1">
                 Upload registrations CSV or XLSX
               </p>
@@ -28,17 +46,10 @@ export default async function AdminPage() {
               href="/admin/import/bookings"
               className="bg-white p-6 rounded-lg shadow hover:shadow-md transition"
             >
-              <h2 className="font-semibold text-lg">📥 Import Bookings</h2>
+              <h2 className="font-semibold text-lg">Import Bookings</h2>
               <p className="text-sm text-gray-600 mt-1">
                 Upload bookings CSV or XLSX
               </p>
-            </Link>
-            <Link
-              href="/admin/imports"
-              className="bg-white p-6 rounded-lg shadow hover:shadow-md transition opacity-50"
-            >
-              <h2 className="font-semibold text-lg">📜 Import History</h2>
-              <p className="text-sm text-gray-600 mt-1">Coming in Day 3</p>
             </Link>
           </div>
         </div>

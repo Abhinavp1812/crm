@@ -15,10 +15,6 @@ function addDays(d: Date, n: number): Date {
   return x;
 }
 
-function maxDate(a: Date, b: Date): Date {
-  return a.getTime() >= b.getTime() ? a : b;
-}
-
 export async function POST(req: Request) {
   const session = await auth();
   if (session?.user?.role !== "ADMIN") {
@@ -58,6 +54,9 @@ export async function POST(req: Request) {
     settings.find((s) => s.key === "bookingFollowupDays")?.value || `${FOLLOWUP_DAYS_DEFAULT}`,
     10
   );
+  const followupStatuses = (settings.find((s) => s.key === "bookingFollowupStatuses")?.value || "Completed")
+    .split(",")
+    .map((s) => s.trim().toLowerCase());
 
   const [existingCustomers, existingOrders, existingSalons] = await Promise.all([
     prisma.customer.findMany({
@@ -186,7 +185,8 @@ export async function POST(req: Request) {
     });
   }
 
-  // ---------- Salon ensure (bulk) ----------
+  // ---------- Second pass: salon ensure (bulk) ----------
+  // Collect all unique salon extIds we need to create
   const newSalonExtIds = new Map<string, ParsedRow>();
   for (const p of toProcess) {
     if (p.salonExtId && !salonByExtId.has(p.salonExtId) && !newSalonExtIds.has(p.salonExtId)) {
@@ -205,6 +205,7 @@ export async function POST(req: Request) {
       })),
       skipDuplicates: true,
     });
+    // Refresh map
     const newSalons = await prisma.salon.findMany({
       where: { externalId: { in: Array.from(newSalonExtIds.keys()) } },
       select: { id: true, externalId: true },
@@ -212,7 +213,7 @@ export async function POST(req: Request) {
     for (const s of newSalons) salonByExtId.set(s.externalId!, s.id);
   }
 
-  // ---------- Customer ensure (bulk) ----------
+  // ---------- Third pass: customer ensure (bulk) ----------
   const newCustomers = new Map<string, ParsedRow>();
   for (const p of toProcess) {
     if (!customerByPhone.has(p.phone) && !newCustomers.has(p.phone)) {
@@ -222,6 +223,7 @@ export async function POST(req: Request) {
   if (newCustomers.size > 0) {
     await prisma.customer.createMany({
       data: Array.from(newCustomers.values()).map((p) => {
+        // Owner resolution for new customer
         let ownerId = adminUser.id;
         if (p.ownerRaw) {
           const matched = userByName.get(p.ownerRaw.toLowerCase().trim());
@@ -229,7 +231,7 @@ export async function POST(req: Request) {
           else {
             errors.push({
               row: p.rowNum,
-              reason: `Owner "${p.ownerRaw}" not recognized - parked with admin`,
+              reason: `Owner "${p.ownerRaw}" not recognized â€” parked with admin`,
               data: p.raw,
             });
           }
@@ -244,6 +246,7 @@ export async function POST(req: Request) {
       }),
       skipDuplicates: true,
     });
+    // Refresh map
     const justCreated = await prisma.customer.findMany({
       where: { phone: { in: Array.from(newCustomers.keys()) } },
       select: {
@@ -253,7 +256,7 @@ export async function POST(req: Request) {
     for (const c of justCreated) customerByPhone.set(c.phone, c);
   }
 
-  // ---------- Upgrade NEW_REGISTRATION -> CUSTOMER ----------
+  // ---------- Upgrade customers from NEW_REGISTRATION â†’ CUSTOMER ----------
   const phonesToUpgrade: string[] = [];
   for (const p of toProcess) {
     const c = customerByPhone.get(p.phone);
@@ -266,6 +269,7 @@ export async function POST(req: Request) {
       where: { phone: { in: phonesToUpgrade } },
       data: { customerType: "CUSTOMER" },
     });
+    // Activity log entries
     const upgradeIds = Array.from(new Set(phonesToUpgrade)).map((ph) => customerByPhone.get(ph)?.id).filter(Boolean) as string[];
     await prisma.activityLog.createMany({
       data: upgradeIds.map((id) => ({
@@ -279,7 +283,7 @@ export async function POST(req: Request) {
     });
   }
 
-  // ---------- Bulk-create bookings ----------
+  // ---------- Fourth pass: bulk-create bookings ----------
   await prisma.booking.createMany({
     data: toProcess.map((p) => ({
       customerId: customerByPhone.get(p.phone)!.id,
@@ -315,163 +319,67 @@ export async function POST(req: Request) {
     skipDuplicates: true,
   });
 
-  // ---------- Activity log: booking imported ----------
+  // ---------- Activity log: booking imported (bulk) ----------
   await prisma.activityLog.createMany({
     data: toProcess.map((p) => ({
       customerId: customerByPhone.get(p.phone)!.id,
       userId,
       activityType: "BOOKING_IMPORTED" as const,
-      note: `Order ${p.orderNo} (${p.status || "no status"})`,
+      note: `Order ${p.orderNo} (${p.status || "unknown status"})`,
     })),
   });
 
-  // ---------- Followup scheduling (NEW LOGIC) ----------
-  // Rule: Latest booking date wins. ANY status. Backdated bookings don't override.
-  // DNC customers: booking logged, no followup.
+  // ---------- Fifth pass: follow-up scheduling ----------
+  // Per locked rule 6: only Completed bookings trigger +N day follow-up.
+  // Per rule 7: latest qualifying booking date wins; older ones don't override.
+  const completedRows = toProcess.filter(
+    (p) => p.status && followupStatuses.includes(p.status.toLowerCase()) && p.bookingDate
+  );
 
-  // Per customer: pick the latest booking date from THIS import
-  const latestInImport = new Map<string, Date>(); // customerId -> latest booking date in this batch
-  for (const p of toProcess) {
-    if (!p.bookingDate) continue;
-    const c = customerByPhone.get(p.phone);
-    if (!c) continue;
-    if (c.doNotContact) continue; // skip DNC
-
-    const existing = latestInImport.get(c.id);
-    if (!existing || p.bookingDate.getTime() > existing.getTime()) {
-      latestInImport.set(c.id, p.bookingDate);
+  // Group by customer; pick latest booking date per customer
+  const latestByCustomer = new Map<string, ParsedRow>();
+  for (const p of completedRows) {
+    const c = customerByPhone.get(p.phone)!;
+    if (c.doNotContact) continue; // DNC: never schedule
+    const existing = latestByCustomer.get(c.id);
+    if (!existing || p.bookingDate!.getTime() > existing.bookingDate!.getTime()) {
+      latestByCustomer.set(c.id, p);
     }
   }
 
-  const customerIds = Array.from(latestInImport.keys());
-  if (customerIds.length === 0) {
-    // Nothing to schedule - finalize
-    await prisma.importHistory.create({
-      data: {
-        importType: "BOOKINGS",
-        filename: file.name,
-        uploadedById: userId,
-        totalRows: sheet.rows.length,
-        newCount: toProcess.length,
-        updatedCount: phonesToUpgrade.length,
-        skippedCount: skipCount + duplicateOrderCount,
-        errorCount: errors.length,
-        notes: `Sheet: ${sheetName}; no followups scheduled`,
-      },
-    });
-    return NextResponse.json({
-      success: true,
-      totalRows: sheet.rows.length,
-      newBookingCount: toProcess.length,
-      duplicateOrderCount,
-      upgradedCustomerCount: phonesToUpgrade.length,
-      skipCount,
-      errorCount: errors.length,
-      followupsCreated: 0,
-      followupsUpdated: 0,
-      followupsSkipped: 0,
-      errors,
-    });
-  }
-
-  // Read existing followups + each customer's previous max booking date
-  // (need previous max so we know if THIS import's latest is actually newer)
-  const [existingFollowups, allBookingDates] = await Promise.all([
-    prisma.followup.findMany({
-      where: { customerId: { in: customerIds } },
-      select: { customerId: true, nextFollowupDate: true },
-    }),
-    prisma.booking.findMany({
-      where: { customerId: { in: customerIds }, bookingDate: { not: null } },
-      select: { customerId: true, bookingDate: true },
-    }),
-  ]);
-
+  // Read existing followups for these customers
+  const customerIds = Array.from(latestByCustomer.keys());
+  const existingFollowups = customerIds.length > 0
+    ? await prisma.followup.findMany({
+        where: { customerId: { in: customerIds } },
+        select: { customerId: true, nextFollowupDate: true },
+      })
+    : [];
   const followupByCustomer = new Map(existingFollowups.map((f) => [f.customerId, f.nextFollowupDate]));
-
-  // Compute previous max booking date per customer (excluding the ones we just inserted).
-  // Actually, the bookings we just inserted ARE in the table now, so allBookingDates includes them.
-  // The "previous max excluding this import" = max of dates NOT in this import's bookings.
-  // Simpler: compute max across ALL bookings (including the ones from this import).
-  // Then check if "latest in import" equals "overall max" -- if yes, the import truly updated the latest.
-  const overallMaxByCustomer = new Map<string, Date>();
-  for (const b of allBookingDates) {
-    if (!b.bookingDate) continue;
-    const existing = overallMaxByCustomer.get(b.customerId);
-    if (!existing || b.bookingDate.getTime() > existing.getTime()) {
-      overallMaxByCustomer.set(b.customerId, b.bookingDate);
-    }
-  }
 
   let followupsCreated = 0;
   let followupsUpdated = 0;
   let followupsSkipped = 0;
-  const followupActivityLogs: { customerId: string; userId: string; activityType: "FOLLOWUP_DATE_CHANGED"; oldValue: string | null; newValue: string; note: string }[] = [];
 
-  for (const [cid, importLatest] of latestInImport) {
-    const overallMax = overallMaxByCustomer.get(cid);
-    if (!overallMax) continue; // shouldn't happen but safe
-
-    // Only proceed if THIS import's latest equals the overall max
-    // (i.e., this import contains the newest booking; backdated imports skip)
-    if (importLatest.getTime() !== overallMax.getTime()) {
-      followupsSkipped++;
-      continue;
-    }
-
-    const newDate = addDays(importLatest, followupDays);
-    // Don't backdate followup - if newDate is in the past, use today
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
-    const finalDate = maxDate(newDate, today);
-
-    const existingFollowup = followupByCustomer.get(cid);
-
-    if (!existingFollowup) {
-      // No followup row - create fresh (auto-reopen for closed customers)
+  for (const [cid, p] of latestByCustomer) {
+    const newDate = addDays(p.bookingDate!, followupDays);
+    const existing = followupByCustomer.get(cid);
+    if (!existing) {
       await prisma.followup.create({
-        data: {
-          customerId: cid,
-          nextFollowupDate: finalDate,
-          updatedById: userId,
-        },
+        data: { customerId: cid, nextFollowupDate: newDate },
       });
       followupsCreated++;
-      followupActivityLogs.push({
-        customerId: cid,
-        userId,
-        activityType: "FOLLOWUP_DATE_CHANGED",
-        oldValue: null,
-        newValue: finalDate.toISOString(),
-        note: "Followup auto-created from new booking",
-      });
-    } else {
-      // Has existing followup - latest booking always wins, override
+    } else if (newDate.getTime() > existing.getTime()) {
+      // Newer trigger date â†’ update
       await prisma.followup.update({
         where: { customerId: cid },
-        data: {
-          nextFollowupDate: finalDate,
-          currentRemark: null,
-          currentNote: null,
-          lastContactedAt: null,
-          lastContactedById: null,
-          updatedById: userId,
-        },
+        data: { nextFollowupDate: newDate, currentRemark: null, currentNote: null },
       });
       followupsUpdated++;
-      followupActivityLogs.push({
-        customerId: cid,
-        userId,
-        activityType: "FOLLOWUP_DATE_CHANGED",
-        oldValue: existingFollowup.toISOString(),
-        newValue: finalDate.toISOString(),
-        note: "Followup reset by new booking import (latest booking wins)",
-      });
+    } else {
+      // Imported booking is older than what's scheduled â€” leave it alone (rule 7)
+      followupsSkipped++;
     }
-  }
-
-  if (followupActivityLogs.length > 0) {
-    await prisma.activityLog.createMany({ data: followupActivityLogs });
   }
 
   // ---------- Log import ----------
@@ -485,7 +393,7 @@ export async function POST(req: Request) {
       updatedCount: phonesToUpgrade.length,
       skippedCount: skipCount + duplicateOrderCount,
       errorCount: errors.length,
-      notes: `Sheet: ${sheetName}; ${followupsCreated} new followups, ${followupsUpdated} updated, ${followupsSkipped} skipped (backdated)`,
+      notes: `Sheet: ${sheetName}; ${followupsCreated} new followups, ${followupsUpdated} updated, ${followupsSkipped} kept`,
     },
   });
 

@@ -1,8 +1,8 @@
-import { NextResponse } from "next/server";
+﻿import { NextResponse } from "next/server";
 import { auth } from "@/auth";
 import { prisma } from "@/lib/prisma";
 import { parseFile, getField } from "@/lib/parseFile";
-import { normalizePhone, cleanString } from "@/lib/normalize";
+import { normalizePhone, cleanString, parseFlexibleDate } from "@/lib/normalize";
 
 export const maxDuration = 300;
 
@@ -26,17 +26,17 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: "Sheet not found" }, { status: 400 });
   }
 
-  // Pre-load existing data
   const [existingOrders, existingCustomers, users] = await Promise.all([
     prisma.booking.findMany({
       where: { orderNo: { not: null } },
       select: { orderNo: true },
     }),
-    prisma.customer.findMany({ select: { phone: true } }),
+    prisma.customer.findMany({ select: { phone: true, doNotContact: true } }),
     prisma.user.findMany({ where: { deletedAt: null }, select: { name: true } }),
   ]);
+
   const existingOrderNos = new Set(existingOrders.map((b) => b.orderNo).filter(Boolean) as string[]);
-  const existingPhones = new Set(existingCustomers.map((c) => c.phone));
+  const customerByPhone = new Map(existingCustomers.map((c) => [c.phone, c]));
   const userNames = new Set(users.map((u) => u.name.toLowerCase().trim()));
 
   let newBookingCount = 0;
@@ -44,7 +44,8 @@ export async function POST(req: Request) {
   let newCustomerCount = 0;
   let existingCustomerCount = 0;
   let skipCount = 0;
-  let completedBookings = 0;
+  let bookingsWithDate = 0;
+  let dncBookings = 0;
   const errors: { row: number; reason: string; data: Record<string, unknown> }[] = [];
   const customersInFile = new Set<string>();
   const ordersInFile = new Set<string>();
@@ -53,8 +54,8 @@ export async function POST(req: Request) {
     const rowNum = idx + 2;
     const phone = normalizePhone(getField(row, "Contact Number"));
     const orderNo = cleanString(getField(row, "Order No.")) || null;
-    const status = cleanString(getField(row, "Status"));
     const ownerRaw = cleanString(getField(row, "Owner"));
+    const bookingDate = parseFlexibleDate(getField(row, "Booking Date"));
 
     if (!phone) {
       skipCount++;
@@ -77,22 +78,24 @@ export async function POST(req: Request) {
     }
     ordersInFile.add(orderNo);
 
-    if (existingPhones.has(phone)) existingCustomerCount++;
-    else if (!customersInFile.has(phone)) {
+    const existingCustomer = customerByPhone.get(phone);
+    if (existingCustomer) {
+      existingCustomerCount++;
+      if (existingCustomer.doNotContact) dncBookings++;
+    } else if (!customersInFile.has(phone)) {
       newCustomerCount++;
       customersInFile.add(phone);
     }
 
-    if (status.toLowerCase() === "completed") completedBookings++;
+    if (bookingDate) bookingsWithDate++;
 
     if (ownerRaw && !userNames.has(ownerRaw.toLowerCase().trim())) {
       errors.push({
         row: rowNum,
-        reason: `Owner "${ownerRaw}" not recognized — will be parked with admin (only used if customer is new)`,
+        reason: `Owner "${ownerRaw}" not recognized - will be parked with admin (only used if customer is new)`,
         data: row,
       });
     }
-
     newBookingCount++;
   });
 
@@ -104,7 +107,8 @@ export async function POST(req: Request) {
     duplicateOrderCount,
     newCustomerCount,
     existingCustomerCount,
-    completedBookings,
+    bookingsWithDate,
+    dncBookings,
     skipCount,
     errorCount: errors.length,
     errors: errors.slice(0, 100),

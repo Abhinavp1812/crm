@@ -1,4 +1,4 @@
-"use client";
+﻿"use client";
 import { useState } from "react";
 import Link from "next/link";
 
@@ -11,7 +11,8 @@ type Preview = {
   duplicateOrderCount: number;
   newCustomerCount: number;
   existingCustomerCount: number;
-  completedBookings: number;
+  bookingsWithDate: number;
+  dncBookings: number;
   skipCount: number;
   errorCount: number;
   errors: { row: number; reason: string; data: Record<string, unknown> }[];
@@ -77,7 +78,7 @@ export default function ImportBookingsPage() {
 
   async function handleCommit() {
     if (!file || !selectedSheet || !preview) return;
-    if (!confirm(`Import ${preview.newBookingCount} new bookings? (${preview.completedBookings} completed will trigger follow-up scheduling)`)) return;
+    if (!confirm(`Import ${preview.newBookingCount} new bookings? (${preview.bookingsWithDate} will schedule followups; ${preview.dncBookings} DNC customers will be skipped)`)) return;
     setLoading(true); setError("");
     const fd = new FormData();
     fd.append("file", file);
@@ -121,57 +122,70 @@ export default function ImportBookingsPage() {
   return (
     <main className="min-h-screen p-8 bg-gray-50">
       <div className="max-w-3xl mx-auto">
-        <Link href="/admin" className="text-sm text-gray-600 hover:text-gray-900">← Admin</Link>
-        <h1 className="text-2xl font-bold mt-2 mb-6">Import Bookings</h1>
+        <Link href="/admin" className="text-sm text-gray-600 hover:text-gray-900">Back to Admin</Link>
+        <h1 className="text-2xl font-bold mb-6 mt-2">Import Bookings</h1>
 
-        {error && <div className="mb-4 p-3 bg-red-50 text-red-700 rounded">{error}</div>}
-
-        {!result && (
-          <div className="bg-white p-6 rounded-lg shadow mb-4">
-            <label className="block text-sm font-medium mb-2">1. Choose CSV or XLSX file</label>
-            <input type="file" accept=".csv,.xlsx,.xls,.tsv" onChange={handleFileSelect} disabled={loading}
-              className="block w-full text-sm border rounded p-2" />
-            {file && <p className="mt-2 text-xs text-gray-600">Selected: {file.name}</p>}
+        {error && (
+          <div className="bg-red-50 border border-red-200 text-red-800 p-3 rounded mb-4">
+            {error}
           </div>
         )}
 
-        {sheets.length > 0 && !preview && !result && (
+        <div className="bg-white p-6 rounded-lg shadow mb-4">
+          <h2 className="font-semibold mb-3">1. Choose CSV or XLSX file</h2>
+          <input type="file" accept=".csv,.xlsx,.xls" onChange={handleFileSelect}
+            className="w-full border rounded px-3 py-2" disabled={loading} />
+          {file && <p className="text-sm text-gray-600 mt-2">Selected: {file.name}</p>}
+        </div>
+
+        {sheets.length > 1 && (
           <div className="bg-white p-6 rounded-lg shadow mb-4">
-            <label className="block text-sm font-medium mb-2">2. Pick the sheet to import</label>
+            <h2 className="font-semibold mb-3">2. Select sheet</h2>
             <select value={selectedSheet} onChange={(e) => setSelectedSheet(e.target.value)}
-              className="block w-full border rounded p-2">
-              <option value="">— Choose —</option>
+              className="w-full border rounded px-3 py-2">
+              <option value="">-- Choose a sheet --</option>
               {sheets.map((s) => (
-                <option key={s.name} value={s.name}>{s.name} ({s.rowCount} rows, {s.headers.length} columns)</option>
+                <option key={s.name} value={s.name}>
+                  {s.name} ({s.rowCount} rows)
+                </option>
               ))}
             </select>
             <button onClick={handlePreview} disabled={!selectedSheet || loading}
               className="mt-3 px-4 py-2 bg-blue-600 text-white rounded disabled:opacity-50">
-              {loading ? "Analyzing..." : "Preview Import"}
+              {loading ? "Loading..." : "Preview"}
+            </button>
+          </div>
+        )}
+
+        {sheets.length === 1 && !preview && (
+          <div className="bg-white p-6 rounded-lg shadow mb-4">
+            <button onClick={handlePreview} disabled={loading}
+              className="px-4 py-2 bg-blue-600 text-white rounded disabled:opacity-50">
+              {loading ? "Loading..." : "Preview"}
             </button>
           </div>
         )}
 
         {preview && !result && (
           <div className="bg-white p-6 rounded-lg shadow mb-4">
-            <h2 className="font-semibold text-lg mb-3">3. Preview</h2>
+            <h2 className="font-semibold mb-3">3. Preview</h2>
             <div className="grid grid-cols-2 gap-4 mb-4">
               <Stat label="Total rows" value={preview.totalRows} color="gray" />
               <Stat label="New bookings" value={preview.newBookingCount} color="green" />
               <Stat label="Duplicate orders (skip)" value={preview.duplicateOrderCount} color="amber" />
-              <Stat label="Completed bookings" value={preview.completedBookings} color="blue" />
+              <Stat label="Bookings with date" value={preview.bookingsWithDate} color="blue" />
               <Stat label="New customers" value={preview.newCustomerCount} color="green" />
               <Stat label="Existing customers" value={preview.existingCustomerCount} color="blue" />
+              <Stat label="DNC bookings (no followup)" value={preview.dncBookings} color="red" />
               <Stat label="Skipped (bad data)" value={preview.skipCount} color="amber" />
-              <Stat label="Warnings" value={preview.errorCount} color="red" />
             </div>
-            <p className="text-xs text-gray-600 mb-3">
-              💡 Only <strong>Completed</strong> bookings trigger the +20-day follow-up rule.
+            <p className="text-sm text-gray-600 mb-3">
+              Latest booking date per customer triggers a +20-day followup. DNC customers are skipped.
               Existing customers keep their current owner (sticky).
             </p>
             {preview.errorCount > 0 && (
-              <div className="mb-4 p-3 bg-amber-50 border border-amber-200 rounded">
-                <p className="text-sm font-medium text-amber-900">⚠️ {preview.errorCount} warning(s) found.</p>
+              <div className="mb-3 p-3 bg-amber-50 border border-amber-200 rounded">
+                <p className="text-sm">{preview.errorCount} warning(s) found.</p>
                 <button onClick={() => downloadErrors(preview.errors)}
                   className="mt-2 text-sm text-blue-700 hover:underline">
                   Download warning report (CSV)
@@ -190,7 +204,7 @@ export default function ImportBookingsPage() {
 
         {result && (
           <div className="bg-white p-6 rounded-lg shadow mb-4">
-            <h2 className="font-semibold text-lg mb-3 text-green-700">✅ Import complete</h2>
+            <h2 className="font-semibold text-lg mb-3 text-green-700">Import complete</h2>
             <div className="grid grid-cols-2 gap-4 mb-4">
               <Stat label="New bookings" value={result.newBookingCount} color="green" />
               <Stat label="Duplicate orders" value={result.duplicateOrderCount} color="amber" />
