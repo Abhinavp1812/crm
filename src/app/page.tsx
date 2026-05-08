@@ -32,7 +32,8 @@ export default async function HomePage({
   const validFilters: FollowupFilter[] = [
     "all",
     "untouched",
-    "in_progress",
+    "todays_followup",
+    "taken_followup",
     "overdue",
     "registered",
     "booked",
@@ -67,9 +68,9 @@ export default async function HomePage({
 
           <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-4">
             <StatCard label="Untouched" value={counts.untouched} color="purple" />
-            <StatCard label="In Progress" value={counts.inProgress} color="amber" />
+            <StatCard label="Today's Followup" value={counts.todaysFollowup} color="blue" />
+            <StatCard label="Taken Followup" value={counts.takenFollowup} color="amber" />
             <StatCard label="Overdue" value={counts.overdue} color="red" />
-            <StatCard label="Due today" value={counts.dueToday} color="blue" />
           </div>
 
           <FilterTabs currentFilter={filter} counts={counts} />
@@ -125,17 +126,19 @@ function FilterTabs({
   currentFilter: FollowupFilter;
   counts: {
     total: number;
+    untouched: number;
+    todaysFollowup: number;
+    takenFollowup: number;
     overdue: number;
     registered: number;
     booked: number;
-    untouched: number;
-    inProgress: number;
   };
 }) {
   const tabs: { id: FollowupFilter; label: string; count: number }[] = [
     { id: "all", label: "All", count: counts.total },
     { id: "untouched", label: "Untouched", count: counts.untouched },
-    { id: "in_progress", label: "In Progress", count: counts.inProgress },
+    { id: "todays_followup", label: "Today's Followup", count: counts.todaysFollowup },
+    { id: "taken_followup", label: "Taken Followup", count: counts.takenFollowup },
     { id: "overdue", label: "Overdue", count: counts.overdue },
     { id: "registered", label: "Registered", count: counts.registered },
     { id: "booked", label: "Booked", count: counts.booked },
@@ -225,7 +228,8 @@ function FollowupRow({
 }) {
   const lastBookingText = f.lastBookingDate ? new Date(f.lastBookingDate).toLocaleDateString("en-IN") : "-";
   const lastContactText = f.lastContactedAt ? new Date(f.lastContactedAt).toLocaleDateString("en-IN") : "Never";
-  const followupText = new Date(f.nextFollowupDate).toLocaleDateString("en-IN");
+  // Display the EFFECTIVE date (Today for untouched/stale, stored otherwise)
+  const followupText = new Date(f.effectiveFollowupDate).toLocaleDateString("en-IN");
   const followupIso = new Date(f.nextFollowupDate).toISOString().slice(0, 10);
   const waMessage = "Hi " + (f.customerName ?? "") + ", this is from Style Lounge.";
 
@@ -238,6 +242,9 @@ function FollowupRow({
         </Link>
         {f.untouched ? (
           <span className="ml-2 inline-block px-1.5 py-0.5 text-xs bg-purple-100 text-purple-800 rounded">New</span>
+        ) : null}
+        {f.isStale ? (
+          <span className="ml-2 inline-block px-1.5 py-0.5 text-xs bg-amber-100 text-amber-800 rounded">Stale</span>
         ) : null}
         {f.currentRemark ? <div className="text-xs text-gray-500 mt-0.5">Last: {f.currentRemark}</div> : null}
       </td>

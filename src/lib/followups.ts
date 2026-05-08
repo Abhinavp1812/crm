@@ -1,4 +1,8 @@
-import { prisma } from "@/lib/prisma";
+﻿import { prisma } from "@/lib/prisma";
+
+// Stale threshold: customers touched longer ago than this are treated as "due today"
+// regardless of their stored followup date. TODO Day 3: read from Setting table.
+const STALE_THRESHOLD_DAYS = 60;
 
 export interface FollowupRow {
   customerId: string;
@@ -8,32 +12,50 @@ export interface FollowupRow {
   customerType: "NEW_REGISTRATION" | "CUSTOMER";
   doNotContact: boolean;
   nextFollowupDate: Date;
+  effectiveFollowupDate: Date; // For display - same as stored unless stale
   currentRemark: string | null;
   currentNote: string | null;
   lastContactedAt: Date | null;
   lastBookingDate: Date | null;
   lastBookingSalon: string | null;
   status: "OVERDUE" | "DUE_TODAY" | "UPCOMING";
-  untouched: boolean; // never contacted by anyone, ever
+  untouched: boolean;
+  isStale: boolean;
 }
 
 export interface FollowupCounts {
   total: number;
-  overdue: number;
-  dueToday: number;
+  untouched: number;
+  todaysFollowup: number;   // touched + due today (incl. stale-rolled)
+  takenFollowup: number;    // touched + due future
+  overdue: number;          // touched (recent) + past
   registered: number;
   booked: number;
-  untouched: number;     // never contacted
-  inProgress: number;    // contacted at least once
 }
 
 export type FollowupFilter =
   | "all"
   | "untouched"
-  | "in_progress"
+  | "todays_followup"
+  | "taken_followup"
   | "overdue"
   | "registered"
   | "booked";
+
+function startOfDay(d: Date): Date {
+  const x = new Date(d);
+  x.setHours(0, 0, 0, 0);
+  return x;
+}
+
+function getDateMarkers() {
+  const today = startOfDay(new Date());
+  const tomorrow = new Date(today);
+  tomorrow.setDate(tomorrow.getDate() + 1);
+  const staleCutoff = new Date(today);
+  staleCutoff.setDate(staleCutoff.getDate() - STALE_THRESHOLD_DAYS);
+  return { today, tomorrow, staleCutoff };
+}
 
 function buildBaseWhere(userId: string) {
   return {
@@ -45,70 +67,104 @@ function buildBaseWhere(userId: string) {
   };
 }
 
+/**
+ * Counts for the 4 stat cards. Counts are filtered by user's customers
+ * AND filtered to "visible" rows (i.e., effectiveDate <= today, mirrors the All tab default).
+ */
 export async function getFollowupCounts(userId: string): Promise<FollowupCounts> {
-  const today = new Date();
-  today.setHours(0, 0, 0, 0);
-  const tomorrow = new Date(today);
-  tomorrow.setDate(tomorrow.getDate() + 1);
-
+  const { today, tomorrow, staleCutoff } = getDateMarkers();
   const baseWhere = buildBaseWhere(userId);
-  const dueWhere = { ...baseWhere, nextFollowupDate: { lt: tomorrow } };
 
-  const [total, overdue, registered, booked, untouched, inProgress] = await Promise.all([
-    prisma.followup.count({ where: dueWhere }),
-    prisma.followup.count({
-      where: { ...dueWhere, nextFollowupDate: { lt: today } },
-    }),
+  // Untouched: no remark AND no lastContactedAt — always visible (date doesn't matter for this group)
+  const untouched = await prisma.followup.count({
+    where: {
+      ...baseWhere,
+      currentRemark: null,
+      lastContactedAt: null,
+    },
+  });
+
+  // Today's Followup: touched (recent) + nextFollowupDate = today, OR touched but stale (regardless of date)
+  // (Stale touched are pulled forward to "today" effectively)
+  const todaysFollowup = await prisma.followup.count({
+    where: {
+      ...baseWhere,
+      OR: [
+        // Touched recently AND date is today
+        {
+          AND: [
+            { nextFollowupDate: { gte: today, lt: tomorrow } },
+            {
+              OR: [
+                { lastContactedAt: { gte: staleCutoff } },
+                { AND: [{ lastContactedAt: null }, { currentRemark: { not: null } }] },
+              ],
+            },
+          ],
+        },
+        // Stale touched (last contact > 60 days ago)
+        {
+          AND: [
+            { lastContactedAt: { lt: staleCutoff, not: null } },
+            { currentRemark: { not: null } },
+          ],
+        },
+      ],
+    },
+  });
+
+  // Taken Followup: touched + future date + recent (not stale)
+  const takenFollowup = await prisma.followup.count({
+    where: {
+      ...baseWhere,
+      nextFollowupDate: { gte: tomorrow },
+      OR: [
+        { lastContactedAt: { gte: staleCutoff } },
+        { AND: [{ lastContactedAt: null }, { currentRemark: { not: null } }] },
+      ],
+    },
+  });
+
+  // Overdue: touched (recent) + past date
+  const overdue = await prisma.followup.count({
+    where: {
+      ...baseWhere,
+      nextFollowupDate: { lt: today },
+      OR: [
+        { lastContactedAt: { gte: staleCutoff } },
+        { AND: [{ lastContactedAt: null }, { currentRemark: { not: null } }] },
+      ],
+    },
+  });
+
+  // Total visible: untouched + todays + taken + overdue
+  const total = untouched + todaysFollowup + takenFollowup + overdue;
+
+  // Type filters (cut across all)
+  const [registered, booked] = await Promise.all([
     prisma.followup.count({
       where: {
-        ...dueWhere,
-        customer: { ...dueWhere.customer, customerType: "NEW_REGISTRATION" },
+        ...baseWhere,
+        customer: { ...baseWhere.customer, customerType: "NEW_REGISTRATION" },
       },
     }),
     prisma.followup.count({
       where: {
-        ...dueWhere,
-        customer: { ...dueWhere.customer, customerType: "CUSTOMER" },
-      },
-    }),
-    prisma.followup.count({
-      where: { ...dueWhere, lastContactedAt: null, currentRemark: null },
-    }),
-    prisma.followup.count({
-      where: {
-        ...dueWhere,
-        OR: [
-          { lastContactedAt: { not: null } },
-          { currentRemark: { not: null } },
-        ],
+        ...baseWhere,
+        customer: { ...baseWhere.customer, customerType: "CUSTOMER" },
       },
     }),
   ]);
 
   return {
     total,
+    untouched,
+    todaysFollowup,
+    takenFollowup,
     overdue,
-    dueToday: total - overdue,
     registered,
     booked,
-    untouched,
-    inProgress,
   };
-}
-
-export async function getFilteredCount(
-  userId: string,
-  filter: FollowupFilter
-): Promise<number> {
-  const today = new Date();
-  today.setHours(0, 0, 0, 0);
-  const tomorrow = new Date(today);
-  tomorrow.setDate(tomorrow.getDate() + 1);
-
-  const baseWhere = buildBaseWhere(userId);
-  const where = applyFilter(baseWhere, filter, today, tomorrow);
-
-  return prisma.followup.count({ where });
 }
 
 type WhereInput = ReturnType<typeof buildBaseWhere> & Record<string, unknown>;
@@ -117,13 +173,9 @@ function applyFilter(
   baseWhere: ReturnType<typeof buildBaseWhere>,
   filter: FollowupFilter,
   today: Date,
-  tomorrow: Date
+  tomorrow: Date,
+  staleCutoff: Date
 ): WhereInput {
-  // Date filter (default: due today or earlier)
-  const dateFilter =
-    filter === "overdue" ? { lt: today } : { lt: tomorrow };
-
-  // Build customer filter as a flexible object so we can add customerType
   const customerFilter: {
     ownerId: string;
     doNotContact: boolean;
@@ -134,27 +186,63 @@ function applyFilter(
     doNotContact: baseWhere.customer.doNotContact,
     deletedAt: baseWhere.customer.deletedAt,
   };
-
   if (filter === "registered") customerFilter.customerType = "NEW_REGISTRATION";
   if (filter === "booked") customerFilter.customerType = "CUSTOMER";
 
-  const where: WhereInput = {
-    customer: customerFilter,
-    nextFollowupDate: dateFilter,
-  };
+  const where: WhereInput = { customer: customerFilter };
 
-  // Touched/untouched filter
   if (filter === "untouched") {
-    where.lastContactedAt = null;
     where.currentRemark = null;
-  } else if (filter === "in_progress") {
+    where.lastContactedAt = null;
+  } else if (filter === "todays_followup") {
     where.OR = [
-      { lastContactedAt: { not: null } },
-      { currentRemark: { not: null } },
+      // Recent touch + due today
+      {
+        AND: [
+          { nextFollowupDate: { gte: today, lt: tomorrow } },
+          {
+            OR: [
+              { lastContactedAt: { gte: staleCutoff } },
+              { AND: [{ lastContactedAt: null }, { currentRemark: { not: null } }] },
+            ],
+          },
+        ],
+      },
+      // Stale touched (any date)
+      {
+        AND: [
+          { lastContactedAt: { lt: staleCutoff, not: null } },
+          { currentRemark: { not: null } },
+        ],
+      },
     ];
+  } else if (filter === "taken_followup") {
+    where.nextFollowupDate = { gte: tomorrow };
+    where.OR = [
+      { lastContactedAt: { gte: staleCutoff } },
+      { AND: [{ lastContactedAt: null }, { currentRemark: { not: null } }] },
+    ];
+  } else if (filter === "overdue") {
+    where.nextFollowupDate = { lt: today };
+    where.OR = [
+      { lastContactedAt: { gte: staleCutoff } },
+      { AND: [{ lastContactedAt: null }, { currentRemark: { not: null } }] },
+    ];
+  } else if (filter === "all" || filter === "registered" || filter === "booked") {
+    // No additional date/touch filter - show everything
   }
 
   return where;
+}
+
+export async function getFilteredCount(
+  userId: string,
+  filter: FollowupFilter
+): Promise<number> {
+  const { today, tomorrow, staleCutoff } = getDateMarkers();
+  const baseWhere = buildBaseWhere(userId);
+  const where = applyFilter(baseWhere, filter, today, tomorrow, staleCutoff);
+  return prisma.followup.count({ where });
 }
 
 export async function getTodayFollowups(
@@ -163,13 +251,9 @@ export async function getTodayFollowups(
   pageSize = 50,
   filter: FollowupFilter = "all"
 ): Promise<FollowupRow[]> {
-  const today = new Date();
-  today.setHours(0, 0, 0, 0);
-  const tomorrow = new Date(today);
-  tomorrow.setDate(tomorrow.getDate() + 1);
-
+  const { today, tomorrow, staleCutoff } = getDateMarkers();
   const baseWhere = buildBaseWhere(userId);
-  const where = applyFilter(baseWhere, filter, today, tomorrow);
+  const where = applyFilter(baseWhere, filter, today, tomorrow, staleCutoff);
 
   const followups = await prisma.followup.findMany({
     where,
@@ -183,7 +267,6 @@ export async function getTodayFollowups(
           customerType: true,
           doNotContact: true,
           bookings: {
-            where: { status: "Completed" },
             orderBy: { bookingDate: "desc" },
             take: 1,
             select: {
@@ -201,15 +284,23 @@ export async function getTodayFollowups(
   });
 
   return followups.map((f) => {
-    const fd = new Date(f.nextFollowupDate);
-    fd.setHours(0, 0, 0, 0);
+    const fd = startOfDay(f.nextFollowupDate);
     const lastBooking = f.customer.bookings[0];
-    let status: "OVERDUE" | "DUE_TODAY" | "UPCOMING";
-    if (fd.getTime() < today.getTime()) status = "OVERDUE";
-    else if (fd.getTime() === today.getTime()) status = "DUE_TODAY";
-    else status = "UPCOMING";
+    const untouched = !f.currentRemark && !f.lastContactedAt;
 
-    const untouched = !f.lastContactedAt && !f.currentRemark;
+    // Stale: touched but last contact > 60 days ago
+    const isStale = !!f.lastContactedAt && f.lastContactedAt < staleCutoff;
+
+    // Effective date: untouched and stale customers shown as Today
+    let effectiveFollowupDate = fd;
+    if (untouched || isStale) {
+      effectiveFollowupDate = today;
+    }
+
+    let status: "OVERDUE" | "DUE_TODAY" | "UPCOMING";
+    if (effectiveFollowupDate.getTime() < today.getTime()) status = "OVERDUE";
+    else if (effectiveFollowupDate.getTime() === today.getTime()) status = "DUE_TODAY";
+    else status = "UPCOMING";
 
     return {
       customerId: f.customer.id,
@@ -219,6 +310,7 @@ export async function getTodayFollowups(
       customerType: f.customer.customerType,
       doNotContact: f.customer.doNotContact,
       nextFollowupDate: f.nextFollowupDate,
+      effectiveFollowupDate,
       currentRemark: f.currentRemark,
       currentNote: f.currentNote,
       lastContactedAt: f.lastContactedAt,
@@ -227,6 +319,7 @@ export async function getTodayFollowups(
         lastBooking?.salon?.name || lastBooking?.salonNameSnapshot || null,
       status,
       untouched,
+      isStale,
     };
   });
 }
@@ -257,6 +350,8 @@ export async function getActiveRemarkOptions() {
     },
   });
 }
+
+// === Admin helpers (unchanged from before) ===
 
 export interface AdminCustomerRow {
   id: string;
@@ -376,6 +471,9 @@ export async function getAllUsersForFilter() {
     select: { id: true, name: true, role: true },
   });
 }
+
+// === Closed Followups helpers (unchanged) ===
+
 export interface ClosedCustomerRow {
   id: string;
   name: string | null;
@@ -395,7 +493,6 @@ export async function getClosedCustomers(
   page = 1,
   pageSize = 50
 ) {
-  // "Closed" means: DNC OR no active followup row exists (cycle closed by Booked/Service Taken/etc.)
   const where: Record<string, unknown> = {
     deletedAt: null,
     OR: [
@@ -404,13 +501,9 @@ export async function getClosedCustomers(
     ],
   };
 
-  // Filter by closure reason if provided
   if (filterReason === "dnc") {
     where.OR = undefined;
     where.doNotContact = true;
-  } else if (filterReason && filterReason !== "all") {
-    // Find customers whose most recent activity matches this reason
-    // (we'll do this in JS post-fetch since it's complex to express in Prisma)
   }
 
   const [customers, total] = await Promise.all([
@@ -463,7 +556,6 @@ export async function getClosedCustomers(
     };
   });
 
-  // Apply post-fetch reason filter if needed
   if (filterReason && filterReason !== "all" && filterReason !== "dnc") {
     rows = rows.filter(
       (r) => r.closedReason.toLowerCase() === filterReason.toLowerCase()
@@ -473,9 +565,7 @@ export async function getClosedCustomers(
   return { rows, total };
 }
 
-/** Distinct closure reasons for filter dropdown. */
 export async function getClosureReasons(): Promise<string[]> {
-  // Get distinct remark labels that close followups, plus DNC
   const closingRemarks = await prisma.remarkOption.findMany({
     where: { isActive: true, closesFollowup: true },
     select: { label: true },
