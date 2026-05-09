@@ -39,23 +39,27 @@ const DEFAULT_SETTINGS: Record<string, string> = {
 };
 
 async function main() {
-  // Admin user
-  const adminHash = await bcrypt.hash("admin123", 10);
+  // Admin user - read from environment with sensible defaults
+  const adminEmail = process.env.SEED_ADMIN_EMAIL || "admin@crm.local";
+  const adminPassword = process.env.SEED_ADMIN_PASSWORD || "admin123";
+  const adminHash = await bcrypt.hash(adminPassword, 10);
   await prisma.user.upsert({
-    where: { email: "admin@crm.local" },
+    where: { email: adminEmail },
     update: {},
     create: {
-      email: "admin@crm.local",
+      email: adminEmail,
       name: "Admin",
       passwordHash: adminHash,
       role: "ADMIN",
     },
   });
-  console.log("✅ Admin: admin@crm.local / admin123");
+  console.log(`✅ Admin seeded: ${adminEmail} (password: from env)`);
 
-  // Default agents
-  const agents = ["Lakshita", "Sonia", "Shivani", "Soumya"];
-  const agentHash = await bcrypt.hash("agent123", 10);
+  // Default agents - names and password can be supplied via env
+  const agentsEnv = process.env.SEED_AGENT_NAMES || "Lakshita,Sonia,Shivani,Soumya";
+  const agents = agentsEnv.split(",").map((s) => s.trim()).filter(Boolean);
+  const agentPassword = process.env.SEED_AGENT_PASSWORD || "agent123";
+  const agentHash = await bcrypt.hash(agentPassword, 10);
   for (const name of agents) {
     const email = `${name.toLowerCase()}@crm.local`;
     await prisma.user.upsert({
@@ -69,7 +73,7 @@ async function main() {
       },
     });
   }
-  console.log(`✅ ${agents.length} agents seeded (password: agent123)`);
+  console.log(`✅ ${agents.length} agents seeded (password: from env)`);
 
   // Remark options with smart-default rules
   for (let i = 0; i < REMARK_OPTIONS.length; i++) {
