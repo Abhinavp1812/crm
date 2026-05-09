@@ -12,8 +12,10 @@ import {
   type BookingFlavor,
 } from "@/lib/followups";
 import { CustomerTypeBadge, FollowupStatusBadge } from "@/components/StatusBadge";
-import TopNav from "@/components/TopNav";
+import Layout from "@/components/Layout";
 import FollowupEditButton from "@/components/FollowupEditButton";
+import SearchBar from "@/components/SearchBar";
+import MoreFiltersDropdown from "@/components/MoreFiltersDropdown";
 import Link from "next/link";
 
 export const dynamic = "force-dynamic";
@@ -55,70 +57,75 @@ export default async function HomePage({
   const totalPages = Math.max(1, Math.ceil(filteredCount / PAGE_SIZE));
 
   return (
-    <>
-      <TopNav />
-      <main className="min-h-screen bg-gray-50 py-6">
-        <div className="max-w-7xl mx-auto px-4">
-          <div className="flex items-baseline justify-between mb-4">
-            <h1 className="text-2xl font-bold text-gray-900">
-              {isAdmin ? "Parking Lot" : session.user.name + "'s Followups"}
-            </h1>
-            <p className="text-sm text-gray-600">
-              {filteredCount.toLocaleString()} of {counts.total.toLocaleString()}
-            </p>
-          </div>
-
-          <div className="grid grid-cols-2 md:grid-cols-5 gap-3 mb-4">
-            <StatCard label="Cold" value={counts.cold} color="purple" />
-            <StatCard label="Booked" value={counts.booked} color="green" />
-            <StatCard label="Today's Followup" value={counts.todaysFollowup} color="blue" />
-            <StatCard label="Pipeline" value={counts.pipeline} color="amber" />
-            <StatCard label="Action Required" value={counts.actionRequired} color="red" />
-          </div>
-
-          <FilterTabs currentFilter={filter} counts={counts} />
-
-          {isAdmin && counts.total > 0 ? (
-            <div className="mb-4 p-3 bg-blue-50 border border-blue-200 rounded text-sm text-blue-900">
-              You are seeing customers in the admin parking lot. Use the Admin page to distribute them.
-            </div>
-          ) : null}
-
-          {filteredCount === 0 ? (
-            <div className="bg-white rounded-lg shadow p-8 text-center text-gray-600">
-              No followups in this view.
-            </div>
-          ) : (
-            <>
-              <div className="bg-white rounded-lg shadow overflow-hidden">
-                <table className="w-full text-sm">
-                  <thead className="bg-gray-50 border-b">
-                    <tr className="text-left text-xs font-medium text-gray-700 uppercase">
-                      <th className="px-4 py-3">Status</th>
-                      <th className="px-4 py-3">Customer</th>
-                      <th className="px-4 py-3">Type</th>
-                      <th className="px-4 py-3">Phone</th>
-                      <th className="px-4 py-3">City</th>
-                      <th className="px-4 py-3">Last Booking</th>
-                      <th className="px-4 py-3">Last Contact</th>
-                      <th className="px-4 py-3">Followup Date</th>
-                      <th className="px-4 py-3">Actions</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-gray-100">
-                    {followups.map((f) => (
-                      <FollowupRow key={f.customerId} f={f} remarkOptions={remarkOptions} />
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-
-              <Pagination page={page} totalPages={totalPages} filter={filter} />
-            </>
-          )}
+    <Layout>
+      {/* Top bar with search */}
+      <div className="flex items-center justify-between mb-6 gap-4 flex-wrap">
+        <div>
+          <h1 className="text-2xl font-bold text-gray-900">
+            {isAdmin ? "Parking Lot" : (session.user.name || "Followups") + "'s Followups"}
+          </h1>
+          <p className="text-sm text-gray-500 mt-0.5">
+            {filteredCount.toLocaleString()} of {counts.total.toLocaleString()}
+          </p>
         </div>
-      </main>
-    </>
+        <div className="flex-1 max-w-md min-w-[240px]">
+          <SearchBar />
+        </div>
+      </div>
+
+      {/* Stat cards */}
+      <div className="grid grid-cols-2 md:grid-cols-5 gap-3 mb-5">
+        <StatCard label="Cold" value={counts.cold} color="purple" />
+        <StatCard label="Booked" value={counts.booked} color="green" />
+        <StatCard label="Today's Followup" value={counts.todaysFollowup} color="blue" />
+        <StatCard label="Pipeline" value={counts.pipeline} color="amber" />
+        <StatCard label="Action Required" value={counts.actionRequired} color="red" />
+      </div>
+
+      {/* Tabs */}
+      <FilterTabs currentFilter={filter} counts={counts} />
+
+      {isAdmin && counts.total > 0 ? (
+        <div className="mb-4 p-3 bg-blue-50 border border-blue-200 rounded text-sm text-blue-900">
+          You are seeing customers in the admin parking lot. Use the Admin page to distribute them.
+        </div>
+      ) : null}
+
+      {filteredCount === 0 ? (
+        <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-8 text-center text-gray-600">
+          No followups in this view.
+        </div>
+      ) : (
+        <>
+          <div className="bg-white rounded-lg shadow-sm border border-gray-200 overflow-hidden">
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm">
+                <thead className="bg-gray-50 border-b border-gray-200">
+                  <tr className="text-left text-xs font-medium text-gray-700 uppercase">
+                    <th className="px-4 py-3">Status</th>
+                    <th className="px-4 py-3">Customer</th>
+                    <th className="px-4 py-3">Type</th>
+                    <th className="px-4 py-3">Phone</th>
+                    <th className="px-4 py-3">City</th>
+                    <th className="px-4 py-3">Last Booking</th>
+                    <th className="px-4 py-3">Last Contact</th>
+                    <th className="px-4 py-3">Followup</th>
+                    <th className="px-4 py-3">Actions</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-gray-100">
+                  {followups.map((f) => (
+                    <FollowupRow key={f.customerId} f={f} remarkOptions={remarkOptions} />
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+          <Pagination page={page} totalPages={totalPages} filter={filter} />
+        </>
+      )}
+    </Layout>
   );
 }
 
@@ -138,20 +145,23 @@ function FilterTabs({
     bookedType: number;
   };
 }) {
-  const tabs: { id: FollowupFilter; label: string; count: number }[] = [
+  const primaryTabs: { id: FollowupFilter; label: string; count: number }[] = [
     { id: "all", label: "All", count: counts.total },
     { id: "cold", label: "Cold", count: counts.cold },
     { id: "booked", label: "Booked", count: counts.booked },
-    { id: "todays_followup", label: "Today's Followup", count: counts.todaysFollowup },
+    { id: "todays_followup", label: "Today", count: counts.todaysFollowup },
     { id: "pipeline", label: "Pipeline", count: counts.pipeline },
     { id: "action_required", label: "Action Required", count: counts.actionRequired },
+  ];
+
+  const secondaryTabs: { id: FollowupFilter; label: string; count: number }[] = [
     { id: "registered", label: "Registered", count: counts.registered },
     { id: "booked_type", label: "Booked (type)", count: counts.bookedType },
   ];
 
   return (
-    <div className="flex gap-1 mb-4 border-b border-gray-200 bg-white rounded-t-lg px-2 pt-2 overflow-x-auto">
-      {tabs.map((t) => {
+    <div className="flex items-end gap-1 mb-5 border-b border-gray-200 overflow-x-auto">
+      {primaryTabs.map((t) => {
         const active = currentFilter === t.id;
         const href = t.id === "all" ? "/" : "/?filter=" + t.id;
         return (
@@ -159,19 +169,21 @@ function FilterTabs({
             key={t.id}
             href={href}
             className={
-              "px-4 py-2 text-sm font-medium border-b-2 transition rounded-t whitespace-nowrap " +
+              "px-4 py-2.5 text-sm font-medium border-b-2 transition whitespace-nowrap " +
               (active
-                ? "border-blue-600 text-blue-700 bg-blue-50"
-                : "border-transparent text-gray-600 hover:text-gray-900 hover:bg-gray-50")
+                ? "border-blue-600 text-blue-700"
+                : "border-transparent text-gray-600 hover:text-gray-900 hover:border-gray-300")
             }
           >
-            {t.label}{" "}
-            <span className={"ml-1.5 text-xs " + (active ? "text-blue-700" : "text-gray-500")}>
-              ({t.count.toLocaleString()})
+            {t.label}
+            <span className={"ml-1.5 text-xs " + (active ? "text-blue-700" : "text-gray-400")}>
+              {t.count.toLocaleString()}
             </span>
           </Link>
         );
       })}
+
+      <MoreFiltersDropdown tabs={secondaryTabs} currentFilter={currentFilter} />
     </div>
   );
 }
@@ -200,7 +212,7 @@ function Pagination({
             "px-3 h-9 inline-flex items-center rounded text-sm " +
             (page === 1
               ? "bg-gray-100 text-gray-400 pointer-events-none"
-              : "bg-white border hover:bg-gray-50 text-gray-700")
+              : "bg-white border border-gray-200 hover:bg-gray-50 text-gray-700")
           }
         >
           Previous
@@ -212,7 +224,7 @@ function Pagination({
             "px-3 h-9 inline-flex items-center rounded text-sm " +
             (page === totalPages
               ? "bg-gray-100 text-gray-400 pointer-events-none"
-              : "bg-white border hover:bg-gray-50 text-gray-700")
+              : "bg-white border border-gray-200 hover:bg-gray-50 text-gray-700")
           }
         >
           Next
@@ -281,9 +293,9 @@ function FollowupRow({
       <td className="px-4 py-3 text-gray-600">{lastContactText}</td>
       <td className="px-4 py-3 text-gray-700 whitespace-nowrap">{followupText}</td>
       <td className="px-4 py-3">
-        <div className="flex gap-2 flex-wrap">
-          <a href={telLink(f.phone)} title="Call" className="inline-flex items-center justify-center px-2 h-8 rounded bg-blue-50 text-blue-700 hover:bg-blue-100 text-xs">Call</a>
-          <a href={whatsappLink(f.phone, waMessage)} target="_blank" rel="noopener" title="WhatsApp" className="inline-flex items-center justify-center px-2 h-8 rounded bg-green-50 text-green-700 hover:bg-green-100 text-xs">WA</a>
+        <div className="flex gap-1.5 flex-wrap">
+          <a href={telLink(f.phone)} title="Call" className="inline-flex items-center justify-center px-2 h-7 rounded bg-blue-50 text-blue-700 hover:bg-blue-100 text-xs">Call</a>
+          <a href={whatsappLink(f.phone, waMessage)} target="_blank" rel="noopener" title="WhatsApp" className="inline-flex items-center justify-center px-2 h-7 rounded bg-green-50 text-green-700 hover:bg-green-100 text-xs">WA</a>
           <FollowupEditButton
             customerId={f.customerId}
             customerName={f.customerName}
@@ -292,7 +304,7 @@ function FollowupRow({
             currentFollowupDate={followupIso}
             remarkOptions={remarkOptions}
           />
-          <Link href={"/customers/" + f.customerId} title="Open" className="inline-flex items-center justify-center px-2 h-8 rounded bg-gray-100 text-gray-700 hover:bg-gray-200 text-xs">Open</Link>
+          <Link href={"/customers/" + f.customerId} title="Open" className="inline-flex items-center justify-center px-2 h-7 rounded bg-gray-100 text-gray-700 hover:bg-gray-200 text-xs">Open</Link>
         </div>
       </td>
     </tr>
@@ -309,14 +321,14 @@ function StatCard({
   color: "red" | "amber" | "blue" | "green" | "purple";
 }) {
   const colors = {
-    red: "bg-red-50 text-red-700",
-    amber: "bg-amber-50 text-amber-700",
-    blue: "bg-blue-50 text-blue-700",
-    green: "bg-green-50 text-green-700",
-    purple: "bg-purple-50 text-purple-700",
+    red: "bg-red-50 text-red-700 border-red-100",
+    amber: "bg-amber-50 text-amber-700 border-amber-100",
+    blue: "bg-blue-50 text-blue-700 border-blue-100",
+    green: "bg-green-50 text-green-700 border-green-100",
+    purple: "bg-purple-50 text-purple-700 border-purple-100",
   };
   return (
-    <div className={"rounded-lg p-3 " + colors[color]}>
+    <div className={"rounded-lg p-3 border " + colors[color]}>
       <p className="text-xs uppercase tracking-wide font-medium">{label}</p>
       <p className="text-2xl font-bold mt-1">{value.toLocaleString()}</p>
     </div>
