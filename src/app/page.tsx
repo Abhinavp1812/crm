@@ -15,7 +15,6 @@ import { CustomerTypeBadge, FollowupStatusBadge } from "@/components/StatusBadge
 import Layout from "@/components/Layout";
 import FollowupEditButton from "@/components/FollowupEditButton";
 import SearchBar from "@/components/SearchBar";
-import MoreFiltersDropdown from "@/components/MoreFiltersDropdown";
 import Link from "next/link";
 
 export const dynamic = "force-dynamic";
@@ -33,36 +32,30 @@ export default async function HomePage({
   const params = await searchParams;
   const page = Math.max(1, parseInt(params.page || "1", 10) || 1);
   const validFilters: FollowupFilter[] = [
-    "all",
-    "cold",
-    "booked",
-    "todays_followup",
-    "pipeline",
-    "action_required",
-    "registered",
-    "booked_type",
+    "all", "cold", "booked", "todays_followup", "pipeline", "action_required", "registered", "booked_type",
   ];
   const filter: FollowupFilter = validFilters.includes(params.filter as FollowupFilter)
     ? (params.filter as FollowupFilter)
     : "all";
 
+  const isAdmin = session.user.role === "ADMIN";
+  const scope = { userId: isAdmin ? null : session.user.id };
+
   const [followups, counts, filteredCount, remarkOptions] = await Promise.all([
-    getTodayFollowups(session.user.id, page, PAGE_SIZE, filter),
-    getFollowupCounts(session.user.id),
-    getFilteredCount(session.user.id, filter),
+    getTodayFollowups(scope, page, PAGE_SIZE, filter),
+    getFollowupCounts(scope),
+    getFilteredCount(scope, filter),
     getActiveRemarkOptions(),
   ]);
 
-  const isAdmin = session.user.role === "ADMIN";
   const totalPages = Math.max(1, Math.ceil(filteredCount / PAGE_SIZE));
 
   return (
     <Layout>
-      {/* Top bar with search */}
       <div className="flex items-center justify-between mb-6 gap-4 flex-wrap">
         <div>
           <h1 className="text-2xl font-bold text-gray-900">
-            {isAdmin ? "Parking Lot" : (session.user.name || "Followups") + "'s Followups"}
+            {isAdmin ? "All Followups (Team View)" : (session.user.name || "Followups") + "'s Followups"}
           </h1>
           <p className="text-sm text-gray-500 mt-0.5">
             {filteredCount.toLocaleString()} of {counts.total.toLocaleString()}
@@ -73,7 +66,6 @@ export default async function HomePage({
         </div>
       </div>
 
-      {/* Stat cards */}
       <div className="grid grid-cols-2 md:grid-cols-5 gap-3 mb-5">
         <StatCard label="Cold" value={counts.cold} color="purple" />
         <StatCard label="Booked" value={counts.booked} color="green" />
@@ -82,14 +74,7 @@ export default async function HomePage({
         <StatCard label="Action Required" value={counts.actionRequired} color="red" />
       </div>
 
-      {/* Tabs */}
       <FilterTabs currentFilter={filter} counts={counts} />
-
-      {isAdmin && counts.total > 0 ? (
-        <div className="mb-4 p-3 bg-blue-50 border border-blue-200 rounded text-sm text-blue-900">
-          You are seeing customers in the admin parking lot. Use the Admin page to distribute them.
-        </div>
-      ) : null}
 
       {filteredCount === 0 ? (
         <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-8 text-center text-gray-600">
@@ -104,6 +89,7 @@ export default async function HomePage({
                   <tr className="text-left text-xs font-medium text-gray-700 uppercase">
                     <th className="px-4 py-3">Status</th>
                     <th className="px-4 py-3">Customer</th>
+                    {isAdmin && <th className="px-4 py-3">Owner</th>}
                     <th className="px-4 py-3">Type</th>
                     <th className="px-4 py-3">Phone</th>
                     <th className="px-4 py-3">City</th>
@@ -115,7 +101,7 @@ export default async function HomePage({
                 </thead>
                 <tbody className="divide-y divide-gray-100">
                   {followups.map((f) => (
-                    <FollowupRow key={f.customerId} f={f} remarkOptions={remarkOptions} />
+                    <FollowupRow key={f.customerId} f={f} remarkOptions={remarkOptions} showOwner={isAdmin} />
                   ))}
                 </tbody>
               </table>
@@ -135,33 +121,24 @@ function FilterTabs({
 }: {
   currentFilter: FollowupFilter;
   counts: {
-    total: number;
-    cold: number;
-    booked: number;
-    todaysFollowup: number;
-    pipeline: number;
-    actionRequired: number;
-    registered: number;
-    bookedType: number;
+    total: number; cold: number; booked: number; todaysFollowup: number;
+    pipeline: number; actionRequired: number; registered: number; bookedType: number;
   };
 }) {
-  const primaryTabs: { id: FollowupFilter; label: string; count: number }[] = [
+  const tabs: { id: FollowupFilter; label: string; count: number }[] = [
     { id: "all", label: "All", count: counts.total },
     { id: "cold", label: "Cold", count: counts.cold },
     { id: "booked", label: "Booked", count: counts.booked },
     { id: "todays_followup", label: "Today", count: counts.todaysFollowup },
     { id: "pipeline", label: "Pipeline", count: counts.pipeline },
     { id: "action_required", label: "Action Required", count: counts.actionRequired },
-  ];
-
-  const secondaryTabs: { id: FollowupFilter; label: string; count: number }[] = [
     { id: "registered", label: "Registered", count: counts.registered },
     { id: "booked_type", label: "Booked (type)", count: counts.bookedType },
   ];
 
   return (
     <div className="flex items-end gap-1 mb-5 border-b border-gray-200 overflow-x-auto">
-      {primaryTabs.map((t) => {
+      {tabs.map((t) => {
         const active = currentFilter === t.id;
         const href = t.id === "all" ? "/" : "/?filter=" + t.id;
         return (
@@ -182,21 +159,11 @@ function FilterTabs({
           </Link>
         );
       })}
-
-      <MoreFiltersDropdown tabs={secondaryTabs} currentFilter={currentFilter} />
     </div>
   );
 }
 
-function Pagination({
-  page,
-  totalPages,
-  filter,
-}: {
-  page: number;
-  totalPages: number;
-  filter: FollowupFilter;
-}) {
+function Pagination({ page, totalPages, filter }: { page: number; totalPages: number; filter: FollowupFilter; }) {
   if (totalPages <= 1) return null;
   const prevPage = Math.max(1, page - 1);
   const nextPage = Math.min(totalPages, page + 1);
@@ -205,30 +172,8 @@ function Pagination({
     <div className="flex items-center justify-between mt-4 px-1">
       <p className="text-sm text-gray-600">Page {page} of {totalPages}</p>
       <div className="flex gap-2">
-        <Link
-          href={"/?page=" + prevPage + filterParam}
-          aria-disabled={page === 1}
-          className={
-            "px-3 h-9 inline-flex items-center rounded text-sm " +
-            (page === 1
-              ? "bg-gray-100 text-gray-400 pointer-events-none"
-              : "bg-white border border-gray-200 hover:bg-gray-50 text-gray-700")
-          }
-        >
-          Previous
-        </Link>
-        <Link
-          href={"/?page=" + nextPage + filterParam}
-          aria-disabled={page === totalPages}
-          className={
-            "px-3 h-9 inline-flex items-center rounded text-sm " +
-            (page === totalPages
-              ? "bg-gray-100 text-gray-400 pointer-events-none"
-              : "bg-white border border-gray-200 hover:bg-gray-50 text-gray-700")
-          }
-        >
-          Next
-        </Link>
+        <Link href={"/?page=" + prevPage + filterParam} className={"px-3 h-9 inline-flex items-center rounded text-sm " + (page === 1 ? "bg-gray-100 text-gray-400 pointer-events-none" : "bg-white border border-gray-200 hover:bg-gray-50 text-gray-700")}>Previous</Link>
+        <Link href={"/?page=" + nextPage + filterParam} className={"px-3 h-9 inline-flex items-center rounded text-sm " + (page === totalPages ? "bg-gray-100 text-gray-400 pointer-events-none" : "bg-white border border-gray-200 hover:bg-gray-50 text-gray-700")}>Next</Link>
       </div>
     </div>
   );
@@ -244,9 +189,7 @@ function BookingFlavorBadge({ flavor }: { flavor: BookingFlavor }) {
   };
   const s = styles[flavor];
   if (!s) return null;
-  return (
-    <span className={"ml-2 inline-block px-1.5 py-0.5 text-xs rounded " + s.color}>{s.label}</span>
-  );
+  return <span className={"ml-2 inline-block px-1.5 py-0.5 text-xs rounded " + s.color}>{s.label}</span>;
 }
 
 type RemarkOption = Awaited<ReturnType<typeof getActiveRemarkOptions>>[number];
@@ -254,9 +197,11 @@ type RemarkOption = Awaited<ReturnType<typeof getActiveRemarkOptions>>[number];
 function FollowupRow({
   f,
   remarkOptions,
+  showOwner,
 }: {
   f: Awaited<ReturnType<typeof getTodayFollowups>>[number];
   remarkOptions: RemarkOption[];
+  showOwner: boolean;
 }) {
   const lastBookingText = f.lastBookingDate ? new Date(f.lastBookingDate).toLocaleDateString("en-IN") : "-";
   const lastContactText = f.lastContactedAt ? new Date(f.lastContactedAt).toLocaleDateString("en-IN") : "Never";
@@ -283,6 +228,9 @@ function FollowupRow({
         ) : null}
         {f.currentRemark ? <div className="text-xs text-gray-500 mt-0.5">Last: {f.currentRemark}</div> : null}
       </td>
+      {showOwner && (
+        <td className="px-4 py-3 text-sm text-gray-700">{f.ownerName || "-"}</td>
+      )}
       <td className="px-4 py-3"><CustomerTypeBadge type={f.customerType} doNotContact={f.doNotContact} /></td>
       <td className="px-4 py-3 font-mono text-gray-700 whitespace-nowrap">{formatPhone(f.phone)}</td>
       <td className="px-4 py-3 text-gray-600">{f.city ?? "-"}</td>
@@ -311,15 +259,7 @@ function FollowupRow({
   );
 }
 
-function StatCard({
-  label,
-  value,
-  color,
-}: {
-  label: string;
-  value: number;
-  color: "red" | "amber" | "blue" | "green" | "purple";
-}) {
+function StatCard({ label, value, color }: { label: string; value: number; color: "red" | "amber" | "blue" | "green" | "purple"; }) {
   const colors = {
     red: "bg-red-50 text-red-700 border-red-100",
     amber: "bg-amber-50 text-amber-700 border-amber-100",

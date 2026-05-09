@@ -14,8 +14,8 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "CRM",
-  description: "Customer follow-up system",
+  title: "Style Lounge CRM",
+  description: "Customer relationship management for Style Lounge",
 };
 
 export default function RootLayout({

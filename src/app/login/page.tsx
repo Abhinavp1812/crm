@@ -34,7 +34,7 @@ export default function LoginPage() {
         onSubmit={handleSubmit}
         className="bg-white p-8 rounded-lg shadow-md w-full max-w-md space-y-4"
       >
-        <h1 className="text-2xl font-bold">CRM Login</h1>
+        <h1 className="text-2xl font-bold">Sign in to Style Lounge CRM</h1>
         {error && (
           <div className="p-3 bg-red-50 text-red-700 rounded">{error}</div>
         )}

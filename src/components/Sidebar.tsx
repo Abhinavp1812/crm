@@ -25,26 +25,28 @@ interface NavItem {
   label: string;
   href: string;
   icon: React.ComponentType<{ className?: string }>;
-  adminOnly?: boolean;
 }
-
-const userNav: NavItem[] = [
-  { label: "Followups", href: "/", icon: HomeIcon },
-  { label: "Customers", href: "/customers", icon: UserGroupIcon },
-  { label: "My Stats", href: "/stats", icon: ChartBarIcon },
-];
-
-const adminNav: NavItem[] = [
-  { label: "Admin", href: "/admin", icon: Cog6ToothIcon },
-  { label: "Imports", href: "/admin/import/registrations", icon: ArrowDownTrayIcon },
-  { label: "Closed", href: "/admin/closed-followups", icon: NoSymbolIcon },
-  { label: "Team Stats", href: "/admin/stats", icon: ChartBarIcon },
-];
 
 export default function Sidebar({ userName, userRole }: SidebarProps) {
   const pathname = usePathname();
   const [collapsed, setCollapsed] = useState(false);
   const [mobileOpen, setMobileOpen] = useState(false);
+
+  // Agent and admin both see followups + customers; admin doesn't get "My Stats"
+  const userNav: NavItem[] = [
+    { label: "Followups", href: "/", icon: HomeIcon },
+    { label: "Customers", href: "/customers", icon: UserGroupIcon },
+  ];
+  if (userRole === "AGENT") {
+    userNav.push({ label: "My Stats", href: "/stats", icon: ChartBarIcon });
+  }
+
+  const adminNav: NavItem[] = [
+    { label: "Admin", href: "/admin", icon: Cog6ToothIcon },
+    { label: "Imports", href: "/admin/imports", icon: ArrowDownTrayIcon },
+    { label: "Closed", href: "/admin/closed-followups", icon: NoSymbolIcon },
+    { label: "Team Stats", href: "/admin/stats", icon: ChartBarIcon },
+  ];
 
   const isActive = (href: string) => {
     if (href === "/") return pathname === "/";
@@ -75,7 +77,6 @@ export default function Sidebar({ userName, userRole }: SidebarProps) {
 
   return (
     <>
-      {/* Mobile hamburger */}
       <button
         onClick={() => setMobileOpen(!mobileOpen)}
         className="md:hidden fixed top-3 left-3 z-50 p-2 bg-white rounded-md shadow"
@@ -84,7 +85,6 @@ export default function Sidebar({ userName, userRole }: SidebarProps) {
         {mobileOpen ? <XMarkIcon className="h-5 w-5" /> : <Bars3Icon className="h-5 w-5" />}
       </button>
 
-      {/* Mobile overlay */}
       {mobileOpen && (
         <div
           onClick={() => setMobileOpen(false)}
@@ -92,27 +92,22 @@ export default function Sidebar({ userName, userRole }: SidebarProps) {
         />
       )}
 
-      {/* Sidebar */}
       <aside
         className={
           "bg-white border-r border-gray-200 flex flex-col transition-all duration-200 z-40 " +
           (collapsed ? "w-16" : "w-56") +
           " " +
-          (mobileOpen
-            ? "fixed inset-y-0 left-0 md:relative"
-            : "hidden md:flex")
+          (mobileOpen ? "fixed inset-y-0 left-0 md:relative" : "hidden md:flex")
         }
       >
-        {/* Logo / Brand */}
         <div className="h-14 flex items-center px-4 border-b border-gray-200">
           {!collapsed ? (
-            <span className="font-bold text-lg text-gray-900">CRM</span>
+            <span className="font-bold text-lg text-gray-900">Style Lounge</span>
           ) : (
-            <span className="font-bold text-lg text-gray-900 mx-auto">C</span>
+            <span className="font-bold text-lg text-gray-900 mx-auto">SL</span>
           )}
         </div>
 
-        {/* User info */}
         {!collapsed && (
           <div className="px-4 py-3 border-b border-gray-200">
             <p className="text-sm font-medium text-gray-900 truncate">{userName}</p>
@@ -120,7 +115,6 @@ export default function Sidebar({ userName, userRole }: SidebarProps) {
           </div>
         )}
 
-        {/* Nav */}
         <nav className="flex-1 px-2 py-3 space-y-1 overflow-y-auto">
           {userNav.map(renderNavItem)}
 
@@ -134,7 +128,6 @@ export default function Sidebar({ userName, userRole }: SidebarProps) {
           )}
         </nav>
 
-        {/* Bottom controls */}
         <div className="border-t border-gray-200 p-2 space-y-1">
           <button
             onClick={() => signOut({ callbackUrl: "/login" })}

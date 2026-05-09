@@ -24,6 +24,7 @@ export interface FollowupRow {
   lastContactedAt: Date | null;
   lastBookingDate: Date | null;
   lastBookingSalon: string | null;
+  ownerName: string | null;
   status: "OVERDUE" | "DUE_TODAY" | "UPCOMING";
   untouched: boolean;
   isStale: boolean;
@@ -70,24 +71,25 @@ function getDateMarkers() {
   return { today, tomorrow, staleCutoff, newBookingCutoff };
 }
 
-function buildBaseWhere(userId: string) {
+// scope: agent userId OR null (= all customers, admin combined view)
+function buildBaseWhere(scope: { userId: string | null }) {
   return {
     customer: {
-      ownerId: userId,
+      ...(scope.userId ? { ownerId: scope.userId } : {}),
       doNotContact: false,
       deletedAt: null,
     },
   };
 }
 
-async function getBookedCustomerIds(userId: string, newBookingCutoff: Date): Promise<Set<string>> {
+async function getBookedCustomerIds(scope: { userId: string | null }, newBookingCutoff: Date): Promise<Set<string>> {
   const rows = await prisma.booking.findMany({
     where: {
       bookingDate: { gte: newBookingCutoff },
       paymentStatus: { in: ["Success", "Partially Paid"] },
       NOT: { status: "Cancelled" },
       customer: {
-        ownerId: userId,
+        ...(scope.userId ? { ownerId: scope.userId } : {}),
         doNotContact: false,
         deletedAt: null,
       },
@@ -98,13 +100,13 @@ async function getBookedCustomerIds(userId: string, newBookingCutoff: Date): Pro
   return new Set(rows.map((r) => r.customerId));
 }
 
-async function getCancelledRecoveryIds(userId: string, newBookingCutoff: Date): Promise<Set<string>> {
+async function getCancelledRecoveryIds(scope: { userId: string | null }, newBookingCutoff: Date): Promise<Set<string>> {
   const rows = await prisma.booking.findMany({
     where: {
       bookingDate: { gte: newBookingCutoff },
       status: "Cancelled",
       customer: {
-        ownerId: userId,
+        ...(scope.userId ? { ownerId: scope.userId } : {}),
         doNotContact: false,
         deletedAt: null,
       },
@@ -155,20 +157,17 @@ function classifyBooking(
   const bd = startOfDay(bookingDate);
   const isFuture = bd.getTime() >= today.getTime();
   const s = (status || "").toLowerCase();
-
   if (s === "completed") return "COMPLETED";
   if (s === "in progress") return "IN_PROGRESS";
-  if (s === "pending") {
-    return isFuture ? "AWAITING_SERVICE" : "PAID_NOT_DONE";
-  }
+  if (s === "pending") return isFuture ? "AWAITING_SERVICE" : "PAID_NOT_DONE";
   return null;
 }
 
-export async function getFollowupCounts(userId: string): Promise<FollowupCounts> {
+export async function getFollowupCounts(scope: { userId: string | null }): Promise<FollowupCounts> {
   const { today, tomorrow, staleCutoff, newBookingCutoff } = getDateMarkers();
-  const baseWhere = buildBaseWhere(userId);
+  const baseWhere = buildBaseWhere(scope);
 
-  const bookedIds = await getBookedCustomerIds(userId, newBookingCutoff);
+  const bookedIds = await getBookedCustomerIds(scope, newBookingCutoff);
   const bookedArr = Array.from(bookedIds);
 
   const cold = await prisma.followup.count({
@@ -255,16 +254,7 @@ export async function getFollowupCounts(userId: string): Promise<FollowupCounts>
     }),
   ]);
 
-  return {
-    total,
-    cold,
-    booked,
-    todaysFollowup,
-    pipeline,
-    actionRequired,
-    registered,
-    bookedType,
-  };
+  return { total, cold, booked, todaysFollowup, pipeline, actionRequired, registered, bookedType };
 }
 
 type WhereInput = ReturnType<typeof buildBaseWhere> & Record<string, unknown>;
@@ -276,31 +266,31 @@ async function applyFilter(
   tomorrow: Date,
   staleCutoff: Date,
   newBookingCutoff: Date,
-  userId: string
+  scope: { userId: string | null }
 ): Promise<WhereInput> {
   const customerFilter: {
-    ownerId: string;
+    ownerId?: string;
     doNotContact: boolean;
     deletedAt: null;
     customerType?: "NEW_REGISTRATION" | "CUSTOMER";
   } = {
-    ownerId: baseWhere.customer.ownerId,
     doNotContact: baseWhere.customer.doNotContact,
     deletedAt: baseWhere.customer.deletedAt,
   };
+  if (scope.userId) customerFilter.ownerId = scope.userId;
   if (filter === "registered") customerFilter.customerType = "NEW_REGISTRATION";
   if (filter === "booked_type") customerFilter.customerType = "CUSTOMER";
 
   const where: WhereInput = { customer: customerFilter };
 
   if (filter === "cold") {
-    const bookedIds = await getBookedCustomerIds(userId, newBookingCutoff);
+    const bookedIds = await getBookedCustomerIds(scope, newBookingCutoff);
     const arr = Array.from(bookedIds);
     where.currentRemark = null;
     where.lastContactedAt = null;
     if (arr.length > 0) where.customerId = { notIn: arr };
   } else if (filter === "booked") {
-    const bookedIds = await getBookedCustomerIds(userId, newBookingCutoff);
+    const bookedIds = await getBookedCustomerIds(scope, newBookingCutoff);
     const arr = Array.from(bookedIds);
     where.currentRemark = null;
     where.lastContactedAt = null;
@@ -342,29 +332,26 @@ async function applyFilter(
   return where;
 }
 
-export async function getFilteredCount(
-  userId: string,
-  filter: FollowupFilter
-): Promise<number> {
+export async function getFilteredCount(scope: { userId: string | null }, filter: FollowupFilter): Promise<number> {
   const { today, tomorrow, staleCutoff, newBookingCutoff } = getDateMarkers();
-  const baseWhere = buildBaseWhere(userId);
-  const where = await applyFilter(baseWhere, filter, today, tomorrow, staleCutoff, newBookingCutoff, userId);
+  const baseWhere = buildBaseWhere(scope);
+  const where = await applyFilter(baseWhere, filter, today, tomorrow, staleCutoff, newBookingCutoff, scope);
   return prisma.followup.count({ where });
 }
 
 export async function getTodayFollowups(
-  userId: string,
+  scope: { userId: string | null },
   page = 1,
   pageSize = 50,
   filter: FollowupFilter = "all"
 ): Promise<FollowupRow[]> {
   const { today, tomorrow, staleCutoff, newBookingCutoff } = getDateMarkers();
-  const baseWhere = buildBaseWhere(userId);
-  const where = await applyFilter(baseWhere, filter, today, tomorrow, staleCutoff, newBookingCutoff, userId);
+  const baseWhere = buildBaseWhere(scope);
+  const where = await applyFilter(baseWhere, filter, today, tomorrow, staleCutoff, newBookingCutoff, scope);
 
   const [bookedIds, cancelledIds] = await Promise.all([
-    getBookedCustomerIds(userId, newBookingCutoff),
-    getCancelledRecoveryIds(userId, newBookingCutoff),
+    getBookedCustomerIds(scope, newBookingCutoff),
+    getCancelledRecoveryIds(scope, newBookingCutoff),
   ]);
 
   const followups = await prisma.followup.findMany({
@@ -378,6 +365,7 @@ export async function getTodayFollowups(
           city: true,
           customerType: true,
           doNotContact: true,
+          owner: { select: { name: true } },
           bookings: {
             orderBy: { bookingDate: "desc" },
             take: 1,
@@ -413,11 +401,8 @@ export async function getTodayFollowups(
     }
 
     let effectiveFollowupDate = fd;
-    if (untouched && !isBooked) {
-      effectiveFollowupDate = today;
-    } else if (isStale) {
-      effectiveFollowupDate = today;
-    }
+    if (untouched && !isBooked) effectiveFollowupDate = today;
+    else if (isStale) effectiveFollowupDate = today;
 
     let status: "OVERDUE" | "DUE_TODAY" | "UPCOMING";
     if (effectiveFollowupDate.getTime() < today.getTime()) status = "OVERDUE";
@@ -437,8 +422,8 @@ export async function getTodayFollowups(
       currentNote: f.currentNote,
       lastContactedAt: f.lastContactedAt,
       lastBookingDate: lastBooking?.bookingDate || null,
-      lastBookingSalon:
-        lastBooking?.salon?.name || lastBooking?.salonNameSnapshot || null,
+      lastBookingSalon: lastBooking?.salon?.name || lastBooking?.salonNameSnapshot || null,
+      ownerName: f.customer.owner?.name || null,
       status,
       untouched,
       isStale,
@@ -476,6 +461,7 @@ export async function getActiveRemarkOptions() {
   });
 }
 
+// === Admin helpers (unchanged signatures, kept) ===
 export interface AdminCustomerRow {
   id: string;
   name: string | null;
@@ -502,13 +488,8 @@ export interface AdminCustomerFilter {
   remark?: string;
 }
 
-export async function getAdminCustomers(
-  filter: AdminCustomerFilter,
-  page = 1,
-  pageSize = 50
-) {
+export async function getAdminCustomers(filter: AdminCustomerFilter, page = 1, pageSize = 50) {
   const where: Record<string, unknown> = { deletedAt: null };
-
   if (filter.search && filter.search.trim().length >= 2) {
     const q = filter.search.trim();
     const digitsOnly = q.replace(/\D/g, "");
@@ -518,45 +499,26 @@ export async function getAdminCustomers(
       { customerIdExt: q },
     ];
   }
-
   if (filter.ownerId) where.ownerId = filter.ownerId;
-  if (filter.customerType && filter.customerType !== "all") {
-    where.customerType = filter.customerType;
-  }
-
-  if (filter.followupState === "dnc") {
-    where.doNotContact = true;
-  } else if (filter.followupState === "closed") {
+  if (filter.customerType && filter.customerType !== "all") where.customerType = filter.customerType;
+  if (filter.followupState === "dnc") where.doNotContact = true;
+  else if (filter.followupState === "closed") {
     where.doNotContact = false;
     where.followup = null;
   } else if (filter.followupState === "active") {
     where.doNotContact = false;
     where.followup = { isNot: null };
   }
-
-  if (filter.remark) {
-    where.followup = { ...(where.followup as object || {}), currentRemark: filter.remark };
-  }
+  if (filter.remark) where.followup = { ...(where.followup as object || {}), currentRemark: filter.remark };
 
   const [customers, total] = await Promise.all([
     prisma.customer.findMany({
       where,
       include: {
         owner: { select: { name: true } },
-        followup: {
-          select: {
-            nextFollowupDate: true,
-            currentRemark: true,
-            currentNote: true,
-            lastContactedAt: true,
-          },
-        },
+        followup: { select: { nextFollowupDate: true, currentRemark: true, currentNote: true, lastContactedAt: true } },
         _count: { select: { activities: true } },
-        activities: {
-          orderBy: { createdAt: "desc" },
-          take: 1,
-          select: { createdAt: true },
-        },
+        activities: { orderBy: { createdAt: "desc" }, take: 1, select: { createdAt: true } },
       },
       orderBy: { updatedAt: "desc" },
       skip: (page - 1) * pageSize,
@@ -566,14 +528,8 @@ export async function getAdminCustomers(
   ]);
 
   const rows: AdminCustomerRow[] = customers.map((c) => ({
-    id: c.id,
-    name: c.name,
-    phone: c.phone,
-    city: c.city,
-    customerType: c.customerType,
-    doNotContact: c.doNotContact,
-    ownerName: c.owner?.name || null,
-    ownerId: c.ownerId,
+    id: c.id, name: c.name, phone: c.phone, city: c.city, customerType: c.customerType,
+    doNotContact: c.doNotContact, ownerName: c.owner?.name || null, ownerId: c.ownerId,
     followupDate: c.followup?.nextFollowupDate || null,
     currentRemark: c.followup?.currentRemark || null,
     currentNote: c.followup?.currentNote || null,
@@ -595,48 +551,27 @@ export async function getAllUsersForFilter() {
 }
 
 export interface ClosedCustomerRow {
-  id: string;
-  name: string | null;
-  phone: string;
-  city: string | null;
-  customerType: "NEW_REGISTRATION" | "CUSTOMER";
-  doNotContact: boolean;
-  doNotContactReason: string | null;
-  doNotContactSetAt: Date | null;
-  ownerName: string | null;
-  closedReason: string;
-  closedAt: Date | null;
+  id: string; name: string | null; phone: string; city: string | null;
+  customerType: "NEW_REGISTRATION" | "CUSTOMER"; doNotContact: boolean;
+  doNotContactReason: string | null; doNotContactSetAt: Date | null;
+  ownerName: string | null; closedReason: string; closedAt: Date | null;
 }
 
-export async function getClosedCustomers(
-  filterReason: string | null,
-  page = 1,
-  pageSize = 50
-) {
+export async function getClosedCustomers(filterReason: string | null, page = 1, pageSize = 50) {
   const where: Record<string, unknown> = {
     deletedAt: null,
-    OR: [
-      { doNotContact: true },
-      { AND: [{ doNotContact: false }, { followup: null }] },
-    ],
+    OR: [{ doNotContact: true }, { AND: [{ doNotContact: false }, { followup: null }] }],
   };
-
   if (filterReason === "dnc") {
     where.OR = undefined;
     where.doNotContact = true;
   }
-
   const [customers, total] = await Promise.all([
     prisma.customer.findMany({
       where,
       include: {
         owner: { select: { name: true } },
-        activities: {
-          where: { activityType: "REMARK_ADDED" },
-          orderBy: { createdAt: "desc" },
-          take: 1,
-          select: { remark: true, createdAt: true },
-        },
+        activities: { where: { activityType: "REMARK_ADDED" }, orderBy: { createdAt: "desc" }, take: 1, select: { remark: true, createdAt: true } },
       },
       orderBy: { updatedAt: "desc" },
       skip: (page - 1) * pageSize,
@@ -644,44 +579,22 @@ export async function getClosedCustomers(
     }),
     prisma.customer.count({ where }),
   ]);
-
   let rows: ClosedCustomerRow[] = customers.map((c) => {
     const lastRemark = c.activities[0];
-    let closedReason = "";
-    let closedAt: Date | null = null;
-
-    if (c.doNotContact) {
-      closedReason = c.doNotContactReason || "Do Not Contact";
-      closedAt = c.doNotContactSetAt;
-    } else if (lastRemark) {
-      closedReason = lastRemark.remark || "Closed";
-      closedAt = lastRemark.createdAt;
-    } else {
-      closedReason = "No active followup";
-      closedAt = c.updatedAt;
-    }
-
+    let closedReason = ""; let closedAt: Date | null = null;
+    if (c.doNotContact) { closedReason = c.doNotContactReason || "Do Not Contact"; closedAt = c.doNotContactSetAt; }
+    else if (lastRemark) { closedReason = lastRemark.remark || "Closed"; closedAt = lastRemark.createdAt; }
+    else { closedReason = "No active followup"; closedAt = c.updatedAt; }
     return {
-      id: c.id,
-      name: c.name,
-      phone: c.phone,
-      city: c.city,
-      customerType: c.customerType,
-      doNotContact: c.doNotContact,
-      doNotContactReason: c.doNotContactReason,
-      doNotContactSetAt: c.doNotContactSetAt,
-      ownerName: c.owner?.name || null,
-      closedReason,
-      closedAt,
+      id: c.id, name: c.name, phone: c.phone, city: c.city, customerType: c.customerType,
+      doNotContact: c.doNotContact, doNotContactReason: c.doNotContactReason,
+      doNotContactSetAt: c.doNotContactSetAt, ownerName: c.owner?.name || null,
+      closedReason, closedAt,
     };
   });
-
   if (filterReason && filterReason !== "all" && filterReason !== "dnc") {
-    rows = rows.filter(
-      (r) => r.closedReason.toLowerCase() === filterReason.toLowerCase()
-    );
+    rows = rows.filter((r) => r.closedReason.toLowerCase() === filterReason.toLowerCase());
   }
-
   return { rows, total };
 }
 

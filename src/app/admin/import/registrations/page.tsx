@@ -1,287 +1,167 @@
 "use client";
+
 import { useState } from "react";
+import Layout from "@/components/Layout";
 import Link from "next/link";
 
-type Sheet = { name: string; headers: string[]; rowCount: number };
-type Preview = {
-  filename: string;
-  sheetName: string;
-  totalRows: number;
-  newCount: number;
-  updateCount: number;
-  skipCount: number;
-  errorCount: number;
-  errors: { row: number; reason: string; data: Record<string, unknown> }[];
-  fullErrorCount: number;
-};
-type CommitResult = {
+interface CommitResponse {
   success: boolean;
   totalRows: number;
   newCount: number;
   updateCount: number;
   skipCount: number;
   errorCount: number;
-  errors: { row: number; reason: string; data: Record<string, unknown> }[];
-};
+  autoAssignedCount?: number;
+  agentBreakdown?: { agentId: string; agentName: string; count: number }[];
+  errors: { row: number; reason: string }[];
+}
 
-export default function ImportRegistrationsPage() {
+export default function RegistrationsImportPage() {
   const [file, setFile] = useState<File | null>(null);
-  const [sheets, setSheets] = useState<Sheet[]>([]);
-  const [selectedSheet, setSelectedSheet] = useState<string>("");
-  const [preview, setPreview] = useState<Preview | null>(null);
-  const [result, setResult] = useState<CommitResult | null>(null);
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState("");
+  const [sheetName, setSheetName] = useState<string | null>(null);
+  const [sheetOptions, setSheetOptions] = useState<string[]>([]);
+  const [parsing, setParsing] = useState(false);
+  const [committing, setCommitting] = useState(false);
+  const [result, setResult] = useState<CommitResponse | null>(null);
+  const [error, setError] = useState<string | null>(null);
 
-  function reset() {
-    setFile(null);
-    setSheets([]);
-    setSelectedSheet("");
-    setPreview(null);
-    setResult(null);
-    setError("");
-  }
-
-  async function handleFileSelect(e: React.ChangeEvent<HTMLInputElement>) {
-    const f = e.target.files?.[0];
+  async function handleFileChange(f: File | null) {
+    setFile(f); setSheetName(null); setSheetOptions([]); setResult(null); setError(null);
     if (!f) return;
-    setFile(f);
-    setSheets([]);
-    setSelectedSheet("");
-    setPreview(null);
-    setResult(null);
-    setError("");
-    setLoading(true);
-
-    const fd = new FormData();
-    fd.append("file", f);
-    const res = await fetch("/api/admin/import/parse", { method: "POST", body: fd });
-    const data = await res.json();
-    setLoading(false);
-    if (!res.ok) {
-      setError(data.error || "Parse failed");
-      return;
+    setParsing(true);
+    try {
+      const fd = new FormData();
+      fd.append("file", f);
+      const res = await fetch("/api/admin/import/parse", { method: "POST", body: fd });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Parse failed");
+      setSheetOptions(data.sheets.map((s: { sheetName: string }) => s.sheetName));
+      if (data.sheets.length === 1) setSheetName(data.sheets[0].sheetName);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Parse failed");
+    } finally {
+      setParsing(false);
     }
-    setSheets(data.sheets);
-    if (data.sheets.length === 1) {
-      setSelectedSheet(data.sheets[0].name);
-    }
-  }
-
-  async function handlePreview() {
-    if (!file || !selectedSheet) return;
-    setLoading(true);
-    setError("");
-    const fd = new FormData();
-    fd.append("file", file);
-    fd.append("sheetName", selectedSheet);
-    const res = await fetch("/api/admin/import/registrations/preview", {
-      method: "POST",
-      body: fd,
-    });
-    const data = await res.json();
-    setLoading(false);
-    if (!res.ok) {
-      setError(data.error || "Preview failed");
-      return;
-    }
-    setPreview(data);
   }
 
   async function handleCommit() {
-    if (!file || !selectedSheet) return;
-    if (!confirm(`Import ${preview?.newCount} new + ${preview?.updateCount} updates?`)) return;
-    setLoading(true);
-    setError("");
-    const fd = new FormData();
-    fd.append("file", file);
-    fd.append("sheetName", selectedSheet);
-
-    let data: CommitResult & { error?: string } = {} as CommitResult;
+    if (!file || !sheetName) return;
+    setCommitting(true); setError(null);
     try {
-      const res = await fetch("/api/admin/import/registrations/commit", {
-        method: "POST",
-        body: fd,
-      });
-      const text = await res.text();
-      try {
-        data = text ? JSON.parse(text) : ({} as CommitResult);
-      } catch {
-        setLoading(false);
-        setError(`Server returned non-JSON response (status ${res.status}). Check server logs.`);
-        return;
-      }
-      setLoading(false);
-      if (!res.ok) {
-        setError(data.error || `Commit failed with status ${res.status}`);
-        return;
-      }
+      const fd = new FormData();
+      fd.append("file", file);
+      fd.append("sheetName", sheetName);
+      const res = await fetch("/api/admin/import/registrations/commit", { method: "POST", body: fd });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Import failed");
       setResult(data);
     } catch (e) {
-      setLoading(false);
-      setError(`Network error: ${e instanceof Error ? e.message : "unknown"}`);
+      setError(e instanceof Error ? e.message : "Import failed");
+    } finally {
+      setCommitting(false);
     }
   }
 
-  function downloadErrors(errors: { row: number; reason: string; data: Record<string, unknown> }[]) {
-    if (errors.length === 0) return;
-    const headers = ["row", "reason", "raw_data"];
-    const rows = errors.map((e) => [
-      e.row,
-      e.reason.replace(/"/g, '""'),
-      JSON.stringify(e.data).replace(/"/g, '""'),
-    ]);
-    const csv = [headers.join(","), ...rows.map((r) => r.map((v) => `"${v}"`).join(","))].join("\n");
-    const blob = new Blob([csv], { type: "text/csv" });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = `import-errors-${Date.now()}.csv`;
-    a.click();
-    URL.revokeObjectURL(url);
-  }
-
   return (
-    <main className="min-h-screen p-8 bg-gray-50">
-      <div className="max-w-3xl mx-auto">
-        <Link href="/admin" className="text-sm text-gray-600 hover:text-gray-900">
-          ← Admin
-        </Link>
-        <h1 className="text-2xl font-bold mt-2 mb-6">Import Registrations</h1>
-
-        {error && (
-          <div className="mb-4 p-3 bg-red-50 text-red-700 rounded">{error}</div>
-        )}
-
-        {/* Step 1: File picker */}
-        {!result && (
-          <div className="bg-white p-6 rounded-lg shadow mb-4">
-            <label className="block text-sm font-medium mb-2">
-              1. Choose CSV or XLSX file
-            </label>
-            <input
-              type="file"
-              accept=".csv,.xlsx,.xls,.tsv"
-              onChange={handleFileSelect}
-              disabled={loading}
-              className="block w-full text-sm border rounded p-2"
-            />
-            {file && <p className="mt-2 text-xs text-gray-600">Selected: {file.name}</p>}
-          </div>
-        )}
-
-        {/* Step 2: Sheet picker */}
-        {sheets.length > 0 && !preview && !result && (
-          <div className="bg-white p-6 rounded-lg shadow mb-4">
-            <label className="block text-sm font-medium mb-2">
-              2. Pick the sheet to import
-            </label>
-            <select
-              value={selectedSheet}
-              onChange={(e) => setSelectedSheet(e.target.value)}
-              className="block w-full border rounded p-2"
-            >
-              <option value="">— Choose —</option>
-              {sheets.map((s) => (
-                <option key={s.name} value={s.name}>
-                  {s.name} ({s.rowCount} rows, {s.headers.length} columns)
-                </option>
-              ))}
-            </select>
-            <button
-              onClick={handlePreview}
-              disabled={!selectedSheet || loading}
-              className="mt-3 px-4 py-2 bg-blue-600 text-white rounded disabled:opacity-50"
-            >
-              {loading ? "Analyzing..." : "Preview Import"}
-            </button>
-          </div>
-        )}
-
-        {/* Step 3: Preview */}
-        {preview && !result && (
-          <div className="bg-white p-6 rounded-lg shadow mb-4">
-            <h2 className="font-semibold text-lg mb-3">3. Preview</h2>
-            <div className="grid grid-cols-2 gap-4 mb-4">
-              <Stat label="Total rows" value={preview.totalRows} color="gray" />
-              <Stat label="New customers" value={preview.newCount} color="green" />
-              <Stat label="Existing (will update)" value={preview.updateCount} color="blue" />
-              <Stat label="Skipped" value={preview.skipCount} color="amber" />
-            </div>
-            {preview.errorCount > 0 && (
-              <div className="mb-4 p-3 bg-amber-50 border border-amber-200 rounded">
-                <p className="text-sm font-medium text-amber-900">
-                  ⚠️ {preview.errorCount} issue(s) found.
-                </p>
-                <button
-                  onClick={() => downloadErrors(preview.errors)}
-                  className="mt-2 text-sm text-blue-700 hover:underline"
-                >
-                  Download error report (CSV)
-                </button>
-              </div>
-            )}
-            <div className="flex gap-2">
-              <button
-                onClick={handleCommit}
-                disabled={loading || preview.newCount + preview.updateCount === 0}
-                className="px-4 py-2 bg-green-600 text-white rounded disabled:opacity-50"
-              >
-                {loading ? "Importing..." : "Confirm & Import"}
-              </button>
-              <button
-                onClick={reset}
-                className="px-4 py-2 bg-gray-200 rounded"
-              >
-                Cancel
-              </button>
-            </div>
-          </div>
-        )}
-
-        {/* Step 4: Result */}
-        {result && (
-          <div className="bg-white p-6 rounded-lg shadow mb-4">
-            <h2 className="font-semibold text-lg mb-3 text-green-700">
-              ✅ Import complete
-            </h2>
-            <div className="grid grid-cols-2 gap-4 mb-4">
-              <Stat label="New customers" value={result.newCount} color="green" />
-              <Stat label="Updated" value={result.updateCount} color="blue" />
-              <Stat label="Skipped" value={result.skipCount} color="amber" />
-              <Stat label="Errors" value={result.errorCount} color="red" />
-            </div>
-            {result.errors.length > 0 && (
-              <button
-                onClick={() => downloadErrors(result.errors)}
-                className="text-sm text-blue-700 hover:underline mb-3"
-              >
-                Download full error report (CSV)
-              </button>
-            )}
-            <button
-              onClick={reset}
-              className="px-4 py-2 bg-blue-600 text-white rounded"
-            >
-              Import another file
-            </button>
-          </div>
-        )}
+    <Layout>
+      <div className="mb-6">
+        <Link href="/admin/imports" className="text-sm text-blue-600 hover:underline">← Back to Imports</Link>
+        <h1 className="text-2xl font-bold text-gray-900 mt-2">Import Registrations</h1>
       </div>
-    </main>
+
+      {!result && (
+        <div className="bg-white rounded-lg border border-gray-200 p-6 mb-4">
+          <label className="block text-sm font-medium text-gray-700 mb-2">1. Choose CSV or XLSX file</label>
+          <input
+            type="file"
+            accept=".csv,.xlsx,.xls"
+            onChange={(e) => handleFileChange(e.target.files?.[0] || null)}
+            className="block w-full text-sm border border-gray-200 rounded-md p-2"
+            disabled={parsing || committing}
+          />
+          {file && <p className="text-xs text-gray-600 mt-1">Selected: {file.name}</p>}
+          {parsing && <p className="text-sm text-blue-600 mt-2">Parsing...</p>}
+
+          {sheetOptions.length > 1 && (
+            <div className="mt-4">
+              <label className="block text-sm font-medium text-gray-700 mb-2">2. Choose sheet</label>
+              <select
+                value={sheetName || ""}
+                onChange={(e) => setSheetName(e.target.value)}
+                className="block w-full text-sm border border-gray-200 rounded-md p-2"
+              >
+                <option value="">-- Select --</option>
+                {sheetOptions.map((s) => (<option key={s} value={s}>{s}</option>))}
+              </select>
+            </div>
+          )}
+
+          {sheetName && (
+            <button
+              onClick={handleCommit}
+              disabled={committing}
+              className="mt-4 px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 disabled:bg-gray-400"
+            >
+              {committing ? "Importing..." : "Import"}
+            </button>
+          )}
+        </div>
+      )}
+
+      {error && (
+        <div className="bg-red-50 border border-red-200 rounded-lg p-4 mb-4">
+          <p className="text-sm text-red-800">{error}</p>
+        </div>
+      )}
+
+      {result && (
+        <div className="bg-white rounded-lg border border-gray-200 p-6">
+          <h2 className="text-lg font-semibold text-green-700 mb-4">Import complete</h2>
+
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-4">
+            <ResultStat label="New" value={result.newCount} color="green" />
+            <ResultStat label="Updated" value={result.updateCount} color="blue" />
+            <ResultStat label="Skipped" value={result.skipCount} color="amber" />
+            <ResultStat label="Errors" value={result.errorCount} color="red" />
+          </div>
+
+          {result.autoAssignedCount && result.autoAssignedCount > 0 && result.agentBreakdown && (
+            <div className="bg-blue-50 border border-blue-200 rounded-lg p-4 mb-4">
+              <h3 className="font-semibold text-blue-900 mb-2">
+                Auto-assigned via round-robin: {result.autoAssignedCount} new customers
+              </h3>
+              <div className="space-y-1">
+                {result.agentBreakdown.map((a) => (
+                  <div key={a.agentId} className="flex justify-between text-sm">
+                    <span className="text-blue-900">• {a.agentName}</span>
+                    <span className="font-mono text-blue-700">{a.count} customer{a.count !== 1 ? "s" : ""}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          <button
+            onClick={() => { setResult(null); setFile(null); setSheetName(null); setSheetOptions([]); }}
+            className="px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700"
+          >
+            Import another file
+          </button>
+        </div>
+      )}
+    </Layout>
   );
 }
 
-function Stat({ label, value, color }: { label: string; value: number; color: string }) {
-  const colors: Record<string, string> = {
-    gray: "bg-gray-50 text-gray-700",
-    green: "bg-green-50 text-green-700",
-    blue: "bg-blue-50 text-blue-700",
-    amber: "bg-amber-50 text-amber-700",
+function ResultStat({ label, value, color }: { label: string; value: number; color: "red" | "amber" | "blue" | "green" }) {
+  const colors = {
     red: "bg-red-50 text-red-700",
+    amber: "bg-amber-50 text-amber-700",
+    blue: "bg-blue-50 text-blue-700",
+    green: "bg-green-50 text-green-700",
   };
   return (
-    <div className={`p-3 rounded ${colors[color]}`}>
+    <div className={"rounded-lg p-3 " + colors[color]}>
       <p className="text-xs uppercase tracking-wide font-medium">{label}</p>
       <p className="text-2xl font-bold mt-1">{value.toLocaleString()}</p>
     </div>

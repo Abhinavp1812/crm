@@ -40,7 +40,6 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: "Sheet not found" }, { status: 400 });
   }
 
-  // ---------- Reference data ----------
   const [users, settings] = await Promise.all([
     prisma.user.findMany({
       where: { deletedAt: null },
@@ -58,6 +57,39 @@ export async function POST(req: Request) {
     settings.find((s) => s.key === "bookingFollowupDays")?.value || `${FOLLOWUP_DAYS_DEFAULT}`,
     10
   );
+
+  // Round-robin agent assignment
+  const activeAgents = await prisma.user.findMany({
+    where: { role: "AGENT", deletedAt: null, onLeaveFrom: null },
+    select: { id: true, name: true },
+  });
+
+  const agentCustomerCounts = await prisma.customer.groupBy({
+    by: ["ownerId"],
+    where: { deletedAt: null, ownerId: { in: activeAgents.map((a) => a.id) } },
+    _count: { _all: true },
+  });
+  const countByOwner = new Map<string, number>();
+  for (const row of agentCustomerCounts) {
+    if (row.ownerId) countByOwner.set(row.ownerId, row._count._all);
+  }
+
+  const agentCounts = new Map<string, number>();
+  activeAgents.forEach((a) => agentCounts.set(a.id, countByOwner.get(a.id) || 0));
+
+  function nextAgentRoundRobin(): string | null {
+    if (agentCounts.size === 0) return null;
+    let minId: string | null = null;
+    let minCount = Infinity;
+    for (const [id, c] of agentCounts.entries()) {
+      if (c < minCount) {
+        minCount = c;
+        minId = id;
+      }
+    }
+    if (minId) agentCounts.set(minId, (agentCounts.get(minId) || 0) + 1);
+    return minId;
+  }
 
   const [existingCustomers, existingOrders, existingSalons] = await Promise.all([
     prisma.customer.findMany({
@@ -79,7 +111,6 @@ export async function POST(req: Request) {
   const existingOrderNos = new Set(existingOrders.map((b) => b.orderNo!));
   const salonByExtId = new Map(existingSalons.map((s) => [s.externalId!, s.id]));
 
-  // ---------- First pass: parse + classify ----------
   type ParsedRow = {
     rowNum: number;
     phone: string;
@@ -186,7 +217,7 @@ export async function POST(req: Request) {
     });
   }
 
-  // ---------- Salon ensure (bulk) ----------
+  // Salon ensure
   const newSalonExtIds = new Map<string, ParsedRow>();
   for (const p of toProcess) {
     if (p.salonExtId && !salonByExtId.has(p.salonExtId) && !newSalonExtIds.has(p.salonExtId)) {
@@ -212,7 +243,9 @@ export async function POST(req: Request) {
     for (const s of newSalons) salonByExtId.set(s.externalId!, s.id);
   }
 
-  // ---------- Customer ensure (bulk) ----------
+  // Customer ensure with round-robin auto-assign
+  let autoAssignedCount = 0;
+  const autoAssignedByAgent = new Map<string, number>(); // agentId -> count
   const newCustomers = new Map<string, ParsedRow>();
   for (const p of toProcess) {
     if (!customerByPhone.has(p.phone) && !newCustomers.has(p.phone)) {
@@ -222,16 +255,39 @@ export async function POST(req: Request) {
   if (newCustomers.size > 0) {
     await prisma.customer.createMany({
       data: Array.from(newCustomers.values()).map((p) => {
-        let ownerId = adminUser.id;
+        let ownerId: string;
         if (p.ownerRaw) {
           const matched = userByName.get(p.ownerRaw.toLowerCase().trim());
-          if (matched) ownerId = matched.id;
-          else {
-            errors.push({
-              row: p.rowNum,
-              reason: `Owner "${p.ownerRaw}" not recognized - parked with admin`,
-              data: p.raw,
-            });
+          if (matched) {
+            ownerId = matched.id;
+          } else {
+            const rrId = nextAgentRoundRobin();
+            if (rrId) {
+              ownerId = rrId;
+              autoAssignedCount++;
+              autoAssignedByAgent.set(rrId, (autoAssignedByAgent.get(rrId) || 0) + 1);
+              errors.push({
+                row: p.rowNum,
+                reason: `Owner "${p.ownerRaw}" not recognized - auto-assigned via round-robin`,
+                data: p.raw,
+              });
+            } else {
+              ownerId = adminUser.id;
+              errors.push({
+                row: p.rowNum,
+                reason: `Owner "${p.ownerRaw}" not recognized and no active agents - parked with admin`,
+                data: p.raw,
+              });
+            }
+          }
+        } else {
+          const rrId = nextAgentRoundRobin();
+          if (rrId) {
+            ownerId = rrId;
+            autoAssignedCount++;
+            autoAssignedByAgent.set(rrId, (autoAssignedByAgent.get(rrId) || 0) + 1);
+          } else {
+            ownerId = adminUser.id;
           }
         }
         return {
@@ -253,7 +309,13 @@ export async function POST(req: Request) {
     for (const c of justCreated) customerByPhone.set(c.phone, c);
   }
 
-  // ---------- Upgrade NEW_REGISTRATION -> CUSTOMER ----------
+  // Build agent breakdown for response
+  const agentBreakdown = Array.from(autoAssignedByAgent.entries()).map(([agentId, count]) => {
+    const agent = activeAgents.find((a) => a.id === agentId);
+    return { agentId, agentName: agent?.name || "Unknown", count };
+  }).sort((a, b) => b.count - a.count);
+
+  // Upgrade NEW_REGISTRATION -> CUSTOMER (sticky ownership)
   const phonesToUpgrade: string[] = [];
   for (const p of toProcess) {
     const c = customerByPhone.get(p.phone);
@@ -279,7 +341,7 @@ export async function POST(req: Request) {
     });
   }
 
-  // ---------- Bulk-create bookings ----------
+  // Bulk-create bookings
   await prisma.booking.createMany({
     data: toProcess.map((p) => ({
       customerId: customerByPhone.get(p.phone)!.id,
@@ -315,7 +377,6 @@ export async function POST(req: Request) {
     skipDuplicates: true,
   });
 
-  // ---------- Activity log: booking imported ----------
   await prisma.activityLog.createMany({
     data: toProcess.map((p) => ({
       customerId: customerByPhone.get(p.phone)!.id,
@@ -325,17 +386,13 @@ export async function POST(req: Request) {
     })),
   });
 
-  // ---------- Followup scheduling (NEW LOGIC) ----------
-  // Rule: Latest booking date wins. ANY status. Backdated bookings don't override.
-  // DNC customers: booking logged, no followup.
-
-  // Per customer: pick the latest booking date from THIS import
-  const latestInImport = new Map<string, Date>(); // customerId -> latest booking date in this batch
+  // Followup scheduling - latest booking wins
+  const latestInImport = new Map<string, Date>();
   for (const p of toProcess) {
     if (!p.bookingDate) continue;
     const c = customerByPhone.get(p.phone);
     if (!c) continue;
-    if (c.doNotContact) continue; // skip DNC
+    if (c.doNotContact) continue;
 
     const existing = latestInImport.get(c.id);
     if (!existing || p.bookingDate.getTime() > existing.getTime()) {
@@ -345,7 +402,6 @@ export async function POST(req: Request) {
 
   const customerIds = Array.from(latestInImport.keys());
   if (customerIds.length === 0) {
-    // Nothing to schedule - finalize
     await prisma.importHistory.create({
       data: {
         importType: "BOOKINGS",
@@ -356,7 +412,7 @@ export async function POST(req: Request) {
         updatedCount: phonesToUpgrade.length,
         skippedCount: skipCount + duplicateOrderCount,
         errorCount: errors.length,
-        notes: `Sheet: ${sheetName}; no followups scheduled`,
+        notes: `Sheet: ${sheetName}; ${autoAssignedCount} auto-assigned; no followups scheduled`,
       },
     });
     return NextResponse.json({
@@ -365,6 +421,8 @@ export async function POST(req: Request) {
       newBookingCount: toProcess.length,
       duplicateOrderCount,
       upgradedCustomerCount: phonesToUpgrade.length,
+      autoAssignedCount,
+      agentBreakdown,
       skipCount,
       errorCount: errors.length,
       followupsCreated: 0,
@@ -374,8 +432,6 @@ export async function POST(req: Request) {
     });
   }
 
-  // Read existing followups + each customer's previous max booking date
-  // (need previous max so we know if THIS import's latest is actually newer)
   const [existingFollowups, allBookingDates] = await Promise.all([
     prisma.followup.findMany({
       where: { customerId: { in: customerIds } },
@@ -389,11 +445,6 @@ export async function POST(req: Request) {
 
   const followupByCustomer = new Map(existingFollowups.map((f) => [f.customerId, f.nextFollowupDate]));
 
-  // Compute previous max booking date per customer (excluding the ones we just inserted).
-  // Actually, the bookings we just inserted ARE in the table now, so allBookingDates includes them.
-  // The "previous max excluding this import" = max of dates NOT in this import's bookings.
-  // Simpler: compute max across ALL bookings (including the ones from this import).
-  // Then check if "latest in import" equals "overall max" -- if yes, the import truly updated the latest.
   const overallMaxByCustomer = new Map<string, Date>();
   for (const b of allBookingDates) {
     if (!b.bookingDate) continue;
@@ -410,17 +461,14 @@ export async function POST(req: Request) {
 
   for (const [cid, importLatest] of latestInImport) {
     const overallMax = overallMaxByCustomer.get(cid);
-    if (!overallMax) continue; // shouldn't happen but safe
+    if (!overallMax) continue;
 
-    // Only proceed if THIS import's latest equals the overall max
-    // (i.e., this import contains the newest booking; backdated imports skip)
     if (importLatest.getTime() !== overallMax.getTime()) {
       followupsSkipped++;
       continue;
     }
 
     const newDate = addDays(importLatest, followupDays);
-    // Don't backdate followup - if newDate is in the past, use today
     const today = new Date();
     today.setHours(0, 0, 0, 0);
     const finalDate = maxDate(newDate, today);
@@ -428,7 +476,6 @@ export async function POST(req: Request) {
     const existingFollowup = followupByCustomer.get(cid);
 
     if (!existingFollowup) {
-      // No followup row - create fresh (auto-reopen for closed customers)
       await prisma.followup.create({
         data: {
           customerId: cid,
@@ -446,7 +493,6 @@ export async function POST(req: Request) {
         note: "Followup auto-created from new booking",
       });
     } else {
-      // Has existing followup - latest booking always wins, override
       await prisma.followup.update({
         where: { customerId: cid },
         data: {
@@ -474,7 +520,6 @@ export async function POST(req: Request) {
     await prisma.activityLog.createMany({ data: followupActivityLogs });
   }
 
-  // ---------- Log import ----------
   await prisma.importHistory.create({
     data: {
       importType: "BOOKINGS",
@@ -485,7 +530,7 @@ export async function POST(req: Request) {
       updatedCount: phonesToUpgrade.length,
       skippedCount: skipCount + duplicateOrderCount,
       errorCount: errors.length,
-      notes: `Sheet: ${sheetName}; ${followupsCreated} new followups, ${followupsUpdated} updated, ${followupsSkipped} skipped (backdated)`,
+      notes: `Sheet: ${sheetName}; ${autoAssignedCount} auto-assigned; ${followupsCreated} new followups, ${followupsUpdated} updated, ${followupsSkipped} skipped (backdated)`,
     },
   });
 
@@ -495,6 +540,8 @@ export async function POST(req: Request) {
     newBookingCount: toProcess.length,
     duplicateOrderCount,
     upgradedCustomerCount: phonesToUpgrade.length,
+    autoAssignedCount,
+    agentBreakdown,
     skipCount,
     errorCount: errors.length,
     followupsCreated,

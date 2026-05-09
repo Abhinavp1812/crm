@@ -4,7 +4,7 @@ import { prisma } from "@/lib/prisma";
 import { parseFile, getField } from "@/lib/parseFile";
 import { normalizePhone, parseFlexibleDate, cleanString } from "@/lib/normalize";
 
-export const maxDuration = 300; // 5 min for big imports
+export const maxDuration = 300;
 
 export async function POST(req: Request) {
   const session = await auth();
@@ -27,7 +27,7 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: "Sheet not found" }, { status: 400 });
   }
 
-  // ---------- Pre-load reference data once ----------
+  // ---------- Pre-load reference data ----------
   const users = await prisma.user.findMany({
     where: { deletedAt: null },
     select: { id: true, name: true, role: true },
@@ -39,6 +39,39 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: "No admin user for parking lot" }, { status: 500 });
   }
 
+  // ---------- Round-robin agent assignment ----------
+  const activeAgents = await prisma.user.findMany({
+    where: { role: "AGENT", deletedAt: null, onLeaveFrom: null },
+    select: { id: true, name: true },
+  });
+
+  const agentCustomerCounts = await prisma.customer.groupBy({
+    by: ["ownerId"],
+    where: { deletedAt: null, ownerId: { in: activeAgents.map((a) => a.id) } },
+    _count: { _all: true },
+  });
+  const countByOwner = new Map<string, number>();
+  for (const row of agentCustomerCounts) {
+    if (row.ownerId) countByOwner.set(row.ownerId, row._count._all);
+  }
+
+  const agentCounts = new Map<string, number>();
+  activeAgents.forEach((a) => agentCounts.set(a.id, countByOwner.get(a.id) || 0));
+
+  function nextAgentRoundRobin(): string | null {
+    if (agentCounts.size === 0) return null;
+    let minId: string | null = null;
+    let minCount = Infinity;
+    for (const [id, c] of agentCounts.entries()) {
+      if (c < minCount) {
+        minCount = c;
+        minId = id;
+      }
+    }
+    if (minId) agentCounts.set(minId, (agentCounts.get(minId) || 0) + 1);
+    return minId;
+  }
+
   const existingCustomers = await prisma.customer.findMany({
     select: {
       id: true, phone: true, customerIdExt: true, ownerId: true,
@@ -48,7 +81,6 @@ export async function POST(req: Request) {
   const customerByPhone = new Map<string, typeof existingCustomers[0]>();
   for (const c of existingCustomers) customerByPhone.set(c.phone, c);
 
-  // ---------- First pass: validate + classify rows in memory ----------
   const today = new Date();
   today.setHours(0, 0, 0, 0);
 
@@ -64,6 +96,7 @@ export async function POST(req: Request) {
     sector: string | null;
     ownerId: string;
     ownerWarning: string | null;
+    autoAssigned: boolean;
     isExisting: boolean;
     existingId: string | null;
     raw: Record<string, unknown>;
@@ -72,6 +105,8 @@ export async function POST(req: Request) {
   const toCreate: ParsedRow[] = [];
   const toUpdate: ParsedRow[] = [];
   let skipCount = 0;
+  let autoAssignedCount = 0;
+  const autoAssignedByAgent = new Map<string, number>(); // agentId -> count
   const errors: { row: number; reason: string; data: Record<string, unknown> }[] = [];
   const seenInFile = new Set<string>();
 
@@ -102,26 +137,45 @@ export async function POST(req: Request) {
 
     let ownerId: string;
     let ownerWarning: string | null = null;
+    let autoAssigned = false;
     const existing = customerByPhone.get(phone);
 
     if (existing) {
+      // Sticky ownership - never reassign existing customers
       ownerId = existing.ownerId || adminUser.id;
     } else if (ownerRaw) {
       const matched = userByName.get(ownerRaw.toLowerCase().trim());
       if (matched) {
         ownerId = matched.id;
       } else {
-        ownerId = adminUser.id;
-        ownerWarning = `Owner "${ownerRaw}" not recognized — parked with admin`;
+        const rrId = nextAgentRoundRobin();
+        if (rrId) {
+          ownerId = rrId;
+          autoAssigned = true;
+          autoAssignedCount++;
+          autoAssignedByAgent.set(rrId, (autoAssignedByAgent.get(rrId) || 0) + 1);
+          ownerWarning = `Owner "${ownerRaw}" not recognized - auto-assigned via round-robin`;
+        } else {
+          ownerId = adminUser.id;
+          ownerWarning = `Owner "${ownerRaw}" not recognized and no active agents - parked with admin`;
+        }
         errors.push({ row: rowNum, reason: ownerWarning, data: row });
       }
     } else {
-      ownerId = adminUser.id;
+      const rrId = nextAgentRoundRobin();
+      if (rrId) {
+        ownerId = rrId;
+        autoAssigned = true;
+        autoAssignedCount++;
+        autoAssignedByAgent.set(rrId, (autoAssignedByAgent.get(rrId) || 0) + 1);
+      } else {
+        ownerId = adminUser.id;
+      }
     }
 
     const parsed: ParsedRow = {
       rowNum, phone, customerIdExt, name, gender, onboardingDate,
-      address, city, sector, ownerId, ownerWarning,
+      address, city, sector, ownerId, ownerWarning, autoAssigned,
       isExisting: !!existing,
       existingId: existing?.id || null,
       raw: row,
@@ -131,8 +185,7 @@ export async function POST(req: Request) {
     else toCreate.push(parsed);
   }
 
-  // ---------- Second pass: bulk DB writes ----------
-  // 1. Bulk-create new customers (createMany — single SQL statement)
+  // ---------- Bulk DB writes ----------
   if (toCreate.length > 0) {
     await prisma.customer.createMany({
       data: toCreate.map((p) => ({
@@ -149,14 +202,12 @@ export async function POST(req: Request) {
       skipDuplicates: true,
     });
 
-    // Re-fetch IDs for the just-created customers
     const newCustomers = await prisma.customer.findMany({
       where: { phone: { in: toCreate.map((p) => p.phone) } },
       select: { id: true, phone: true },
     });
     const idByPhone = new Map(newCustomers.map((c) => [c.phone, c.id]));
 
-    // Bulk-create followups (today's date)
     await prisma.followup.createMany({
       data: toCreate
         .map((p) => ({
@@ -167,7 +218,6 @@ export async function POST(req: Request) {
       skipDuplicates: true,
     });
 
-    // Bulk-create activity log entries
     await prisma.activityLog.createMany({
       data: toCreate
         .filter((p) => idByPhone.get(p.phone))
@@ -175,12 +225,10 @@ export async function POST(req: Request) {
           customerId: idByPhone.get(p.phone)!,
           userId,
           activityType: "CUSTOMER_IMPORTED" as const,
-          note: p.ownerWarning || "Registration imported",
+          note: p.ownerWarning || (p.autoAssigned ? "Registration imported, auto-assigned" : "Registration imported"),
         })),
     });
 
-    // Bulk-create registration history
-    // Use a unique key fallback for rows without customerIdExt
     await prisma.registration.createMany({
       data: toCreate
         .filter((p) => idByPhone.get(p.phone))
@@ -194,8 +242,6 @@ export async function POST(req: Request) {
     });
   }
 
-  // 2. Update existing customers — only fill empty fields
-  // Group updates to minimize queries
   for (const p of toUpdate) {
     const existing = customerByPhone.get(p.phone)!;
     const data: Record<string, unknown> = {};
@@ -210,7 +256,12 @@ export async function POST(req: Request) {
     }
   }
 
-  // ---------- Log the import ----------
+  // Build agent breakdown for response
+  const agentBreakdown = Array.from(autoAssignedByAgent.entries()).map(([agentId, count]) => {
+    const agent = activeAgents.find((a) => a.id === agentId);
+    return { agentId, agentName: agent?.name || "Unknown", count };
+  }).sort((a, b) => b.count - a.count);
+
   await prisma.importHistory.create({
     data: {
       importType: "REGISTRATIONS",
@@ -221,7 +272,7 @@ export async function POST(req: Request) {
       updatedCount: toUpdate.length,
       skippedCount: skipCount,
       errorCount: errors.length,
-      notes: `Sheet: ${sheetName}`,
+      notes: `Sheet: ${sheetName}; ${autoAssignedCount} auto-assigned via round-robin`,
     },
   });
 
@@ -232,6 +283,8 @@ export async function POST(req: Request) {
     updateCount: toUpdate.length,
     skipCount,
     errorCount: errors.length,
+    autoAssignedCount,
+    agentBreakdown,
     errors,
   });
 }
