@@ -55,21 +55,14 @@ export async function POST(req: Request) {
     if (row.ownerId) countByOwner.set(row.ownerId, row._count._all);
   }
 
-  const agentCounts = new Map<string, number>();
-  activeAgents.forEach((a) => agentCounts.set(a.id, countByOwner.get(a.id) || 0));
-
+  // For deterministic even distribution of new customers, use cyclic round-robin over activeAgents
+  const agentList = activeAgents.map((a) => a.id);
+  let rrIndex = 0;
   function nextAgentRoundRobin(): string | null {
-    if (agentCounts.size === 0) return null;
-    let minId: string | null = null;
-    let minCount = Infinity;
-    for (const [id, c] of agentCounts.entries()) {
-      if (c < minCount) {
-        minCount = c;
-        minId = id;
-      }
-    }
-    if (minId) agentCounts.set(minId, (agentCounts.get(minId) || 0) + 1);
-    return minId;
+    if (agentList.length === 0) return null;
+    const id = agentList[rrIndex % agentList.length];
+    rrIndex++;
+    return id;
   }
 
   const existingCustomers = await prisma.customer.findMany({

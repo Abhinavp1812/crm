@@ -15,6 +15,7 @@ import {
   ArrowRightOnRectangleIcon,
 } from "@heroicons/react/24/outline";
 import { signOut } from "next-auth/react";
+import SelfLeaveButton from "./SelfLeaveButton";
 
 interface SidebarProps {
   userName: string;
@@ -110,9 +111,14 @@ export default function Sidebar({ userName, userRole }: SidebarProps) {
 
         {!collapsed && (
           <div className="px-4 py-3 border-b border-gray-200">
-            <p className="text-sm font-medium text-gray-900 truncate">{userName}</p>
-            <p className="text-xs text-gray-500">{userRole}</p>
-          </div>
+              <p className="text-sm font-medium text-gray-900 truncate">{userName}</p>
+              <p className="text-xs text-gray-500">{userRole}</p>
+              {userRole === "AGENT" && (
+                <div className="mt-2">
+                  <SelfLeaveButton role={userRole} />
+                </div>
+              )}
+            </div>
         )}
 
         <nav className="flex-1 px-2 py-3 space-y-1 overflow-y-auto">

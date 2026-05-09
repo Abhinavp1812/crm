@@ -41,6 +41,13 @@ export default async function AdminPage() {
           title="Imports"
           description="Upload registrations and bookings; auto-assigns unowned customers"
         />
+        <AdminTile
+          href="/admin/team"
+          icon={UserGroupIcon}
+          color="blue"
+          title="Team"
+          description="Manage agents: add, put on leave, reassign customers, and remove"
+        />
       </div>
     </Layout>
   );

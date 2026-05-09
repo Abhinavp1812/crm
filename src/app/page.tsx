@@ -205,8 +205,15 @@ function FollowupRow({
 }) {
   const lastBookingText = f.lastBookingDate ? new Date(f.lastBookingDate).toLocaleDateString("en-IN") : "-";
   const lastContactText = f.lastContactedAt ? new Date(f.lastContactedAt).toLocaleDateString("en-IN") : "Never";
+  function toLocalIso(date: Date) {
+    const y = date.getFullYear();
+    const m = String(date.getMonth() + 1).padStart(2, "0");
+    const d = String(date.getDate()).padStart(2, "0");
+    return `${y}-${m}-${d}`;
+  }
+
   const followupText = new Date(f.effectiveFollowupDate).toLocaleDateString("en-IN");
-  const followupIso = new Date(f.nextFollowupDate).toISOString().slice(0, 10);
+  const followupIso = toLocalIso(new Date(f.nextFollowupDate));
   const waMessage = "Hi " + (f.customerName ?? "") + ", this is from Style Lounge.";
 
   return (

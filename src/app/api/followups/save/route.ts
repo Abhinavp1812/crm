@@ -70,7 +70,18 @@ export async function POST(req: Request) {
   }
 
   const now = new Date();
-  const newDate = nextFollowupDate ? new Date(nextFollowupDate) : null;
+  // Parse nextFollowupDate (YYYY-MM-DD) as a date-only UTC value to avoid timezone shifts
+  let newDate: Date | null = null;
+  if (nextFollowupDate) {
+    const m = nextFollowupDate.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+    if (!m) {
+      return NextResponse.json({ error: "Invalid date format" }, { status: 400 });
+    }
+    const y = Number(m[1]);
+    const mo = Number(m[2]);
+    const d = Number(m[3]);
+    newDate = new Date(Date.UTC(y, mo - 1, d));
+  }
 
   // Transaction: update everything atomically
   await prisma.$transaction(async (tx) => {

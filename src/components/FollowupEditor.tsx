@@ -31,7 +31,28 @@ export default function FollowupEditor({
   const router = useRouter();
   const [remark, setRemark] = useState(currentRemark || "");
   const [note, setNote] = useState(currentNote || "");
-  const [nextDate, setNextDate] = useState(currentFollowupDate);
+  function toLocalIsoFromAny(input: string) {
+    try {
+      const d = new Date(input);
+      const y = d.getUTCFullYear();
+      const m = String(d.getUTCMonth() + 1).padStart(2, "0");
+      const dd = String(d.getUTCDate()).padStart(2, "0");
+      return `${y}-${m}-${dd}`;
+    } catch {
+      return input?.slice(0, 10) || new Date().toISOString().slice(0, 10);
+    }
+  }
+
+  function todayLocalIso() {
+    const d = new Date();
+    const y = d.getFullYear();
+    const m = String(d.getMonth() + 1).padStart(2, "0");
+    const dd = String(d.getDate()).padStart(2, "0");
+    return `${y}-${m}-${dd}`;
+  }
+
+  // Default to today's date when opening the editor; user can change it.
+  const [nextDate, setNextDate] = useState<string>(todayLocalIso());
   const [flagDnc, setFlagDnc] = useState(false);
   const [dncReason, setDncReason] = useState("");
   const [saving, setSaving] = useState(false);
@@ -48,9 +69,13 @@ export default function FollowupEditor({
     setError("");
     const opt = remarkOptions.find((r) => r.label === label);
     if (opt && opt.defaultDaysAhead !== null) {
+      // compute default date using UTC to avoid timezone shifts
       const d = new Date();
-      d.setDate(d.getDate() + opt.defaultDaysAhead);
-      setNextDate(d.toISOString().slice(0, 10));
+      d.setUTCDate(d.getUTCDate() + opt.defaultDaysAhead);
+      const y = d.getUTCFullYear();
+      const m = String(d.getUTCMonth() + 1).padStart(2, "0");
+      const dd = String(d.getUTCDate()).padStart(2, "0");
+      setNextDate(`${y}-${m}-${dd}`);
     }
   }
 

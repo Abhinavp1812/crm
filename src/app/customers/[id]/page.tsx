@@ -38,9 +38,16 @@ export default async function CustomerPage({ params }: { params: Promise<{ id: s
   const isOwner = customer.ownerId === session.user.id;
   const canEdit = isOwner || isAdmin;
 
+  function toLocalIso(date: Date) {
+    const y = date.getFullYear();
+    const m = String(date.getMonth() + 1).padStart(2, "0");
+    const d = String(date.getDate()).padStart(2, "0");
+    return `${y}-${m}-${d}`;
+  }
+
   const followupIso = customer.followup
-    ? new Date(customer.followup.nextFollowupDate).toISOString().slice(0, 10)
-    : new Date().toISOString().slice(0, 10);
+    ? toLocalIso(new Date(customer.followup.nextFollowupDate))
+    : toLocalIso(new Date());
 
   const lastBooking = customer.bookings[0];
   const completedBookings = customer.bookings.filter((b) => b.status === "Completed");

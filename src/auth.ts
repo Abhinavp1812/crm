@@ -25,6 +25,14 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
 
         const ok = await bcrypt.compare(password, user.passwordHash);
         if (!ok) return null;
+        // If user was marked on leave, bring them back when they successfully login
+        if (user.onLeaveFrom || user.onLeaveUntil) {
+          try {
+            await prisma.user.update({ where: { id: user.id }, data: { onLeaveFrom: null, onLeaveUntil: null } });
+          } catch {
+            // ignore update errors for login
+          }
+        }
 
         return {
           id: user.id,
