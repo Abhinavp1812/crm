@@ -9,6 +9,7 @@ import {
   whatsappLink,
   telLink,
   type FollowupFilter,
+  type BookingFlavor,
 } from "@/lib/followups";
 import { CustomerTypeBadge, FollowupStatusBadge } from "@/components/StatusBadge";
 import TopNav from "@/components/TopNav";
@@ -31,12 +32,13 @@ export default async function HomePage({
   const page = Math.max(1, parseInt(params.page || "1", 10) || 1);
   const validFilters: FollowupFilter[] = [
     "all",
-    "untouched",
-    "todays_followup",
-    "taken_followup",
-    "overdue",
-    "registered",
+    "cold",
     "booked",
+    "todays_followup",
+    "pipeline",
+    "action_required",
+    "registered",
+    "booked_type",
   ];
   const filter: FollowupFilter = validFilters.includes(params.filter as FollowupFilter)
     ? (params.filter as FollowupFilter)
@@ -66,11 +68,12 @@ export default async function HomePage({
             </p>
           </div>
 
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-4">
-            <StatCard label="Untouched" value={counts.untouched} color="purple" />
+          <div className="grid grid-cols-2 md:grid-cols-5 gap-3 mb-4">
+            <StatCard label="Cold" value={counts.cold} color="purple" />
+            <StatCard label="Booked" value={counts.booked} color="green" />
             <StatCard label="Today's Followup" value={counts.todaysFollowup} color="blue" />
-            <StatCard label="Taken Followup" value={counts.takenFollowup} color="amber" />
-            <StatCard label="Overdue" value={counts.overdue} color="red" />
+            <StatCard label="Pipeline" value={counts.pipeline} color="amber" />
+            <StatCard label="Action Required" value={counts.actionRequired} color="red" />
           </div>
 
           <FilterTabs currentFilter={filter} counts={counts} />
@@ -126,22 +129,24 @@ function FilterTabs({
   currentFilter: FollowupFilter;
   counts: {
     total: number;
-    untouched: number;
-    todaysFollowup: number;
-    takenFollowup: number;
-    overdue: number;
-    registered: number;
+    cold: number;
     booked: number;
+    todaysFollowup: number;
+    pipeline: number;
+    actionRequired: number;
+    registered: number;
+    bookedType: number;
   };
 }) {
   const tabs: { id: FollowupFilter; label: string; count: number }[] = [
     { id: "all", label: "All", count: counts.total },
-    { id: "untouched", label: "Untouched", count: counts.untouched },
-    { id: "todays_followup", label: "Today's Followup", count: counts.todaysFollowup },
-    { id: "taken_followup", label: "Taken Followup", count: counts.takenFollowup },
-    { id: "overdue", label: "Overdue", count: counts.overdue },
-    { id: "registered", label: "Registered", count: counts.registered },
+    { id: "cold", label: "Cold", count: counts.cold },
     { id: "booked", label: "Booked", count: counts.booked },
+    { id: "todays_followup", label: "Today's Followup", count: counts.todaysFollowup },
+    { id: "pipeline", label: "Pipeline", count: counts.pipeline },
+    { id: "action_required", label: "Action Required", count: counts.actionRequired },
+    { id: "registered", label: "Registered", count: counts.registered },
+    { id: "booked_type", label: "Booked (type)", count: counts.bookedType },
   ];
 
   return (
@@ -217,6 +222,21 @@ function Pagination({
   );
 }
 
+function BookingFlavorBadge({ flavor }: { flavor: BookingFlavor }) {
+  if (!flavor) return null;
+  const styles: Record<string, { label: string; color: string }> = {
+    AWAITING_SERVICE: { label: "Awaiting service", color: "bg-blue-100 text-blue-800" },
+    PAID_NOT_DONE: { label: "Paid, not done", color: "bg-orange-100 text-orange-800" },
+    COMPLETED: { label: "Completed", color: "bg-green-100 text-green-800" },
+    IN_PROGRESS: { label: "In progress", color: "bg-yellow-100 text-yellow-800" },
+  };
+  const s = styles[flavor];
+  if (!s) return null;
+  return (
+    <span className={"ml-2 inline-block px-1.5 py-0.5 text-xs rounded " + s.color}>{s.label}</span>
+  );
+}
+
 type RemarkOption = Awaited<ReturnType<typeof getActiveRemarkOptions>>[number];
 
 function FollowupRow({
@@ -228,7 +248,6 @@ function FollowupRow({
 }) {
   const lastBookingText = f.lastBookingDate ? new Date(f.lastBookingDate).toLocaleDateString("en-IN") : "-";
   const lastContactText = f.lastContactedAt ? new Date(f.lastContactedAt).toLocaleDateString("en-IN") : "Never";
-  // Display the EFFECTIVE date (Today for untouched/stale, stored otherwise)
   const followupText = new Date(f.effectiveFollowupDate).toLocaleDateString("en-IN");
   const followupIso = new Date(f.nextFollowupDate).toISOString().slice(0, 10);
   const waMessage = "Hi " + (f.customerName ?? "") + ", this is from Style Lounge.";
@@ -240,9 +259,13 @@ function FollowupRow({
         <Link href={"/customers/" + f.customerId} className="font-medium text-gray-900 hover:text-blue-700">
           {f.customerName ?? "(no name)"}
         </Link>
-        {f.untouched ? (
-          <span className="ml-2 inline-block px-1.5 py-0.5 text-xs bg-purple-100 text-purple-800 rounded">New</span>
+        {f.untouched && !f.isBooked && !f.isCancelledRecovery ? (
+          <span className="ml-2 inline-block px-1.5 py-0.5 text-xs bg-purple-100 text-purple-800 rounded">Cold</span>
         ) : null}
+        {f.isCancelledRecovery ? (
+          <span className="ml-2 inline-block px-1.5 py-0.5 text-xs bg-red-100 text-red-800 rounded">Recover</span>
+        ) : null}
+        <BookingFlavorBadge flavor={f.bookingFlavor} />
         {f.isStale ? (
           <span className="ml-2 inline-block px-1.5 py-0.5 text-xs bg-amber-100 text-amber-800 rounded">Stale</span>
         ) : null}
