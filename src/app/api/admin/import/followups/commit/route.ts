@@ -9,7 +9,7 @@ export const maxDuration = 60;
 export async function POST(request: Request) {
   try {
     const session = await auth();
-    if (!session?.user?.id || session.user.role !== "ADMIN") {
+    if (!session?.user?.id || (session.user.role !== "ADMIN" && session.user.id !== "super-admin")) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
 

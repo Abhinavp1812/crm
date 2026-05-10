@@ -20,11 +20,12 @@ function maxDate(a: Date, b: Date): Date {
 }
 
 export async function POST(req: Request) {
+  try {
   const session = await auth();
   if (session?.user?.role !== "ADMIN") {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
-  const userId = session.user.id;
+  const sessionUserId = session.user.id;
 
   const formData = await req.formData();
   const file = formData.get("file") as File | null;
@@ -53,6 +54,7 @@ export async function POST(req: Request) {
   if (!adminUser) {
     return NextResponse.json({ error: "No admin user for parking lot" }, { status: 500 });
   }
+  const userId = sessionUserId === "super-admin" ? adminUser.id : sessionUserId;
   const followupDays = parseInt(
     settings.find((s) => s.key === "bookingFollowupDays")?.value || `${FOLLOWUP_DAYS_DEFAULT}`,
     10
@@ -552,4 +554,11 @@ export async function POST(req: Request) {
     followupsSkipped,
     errors,
   });
+  } catch (err) {
+    console.error("[bookings/commit]", err);
+    return NextResponse.json(
+      { error: err instanceof Error ? err.message : "Internal server error" },
+      { status: 500 }
+    );
+  }
 }

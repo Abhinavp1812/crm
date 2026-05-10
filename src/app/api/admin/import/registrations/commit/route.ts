@@ -7,11 +7,12 @@ import { normalizePhone, parseFlexibleDate, cleanString } from "@/lib/normalize"
 export const maxDuration = 60;
 
 export async function POST(req: Request) {
+  try {
   const session = await auth();
   if (session?.user?.role !== "ADMIN") {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
-  const userId = session.user.id;
+  const sessionUserId = session.user.id;
 
   const formData = await req.formData();
   const file = formData.get("file") as File | null;
@@ -38,6 +39,8 @@ export async function POST(req: Request) {
   if (!adminUser) {
     return NextResponse.json({ error: "No admin user for parking lot" }, { status: 500 });
   }
+  // Super Admin is virtual (not in DB), use real admin's ID for FK fields
+  const userId = sessionUserId === "super-admin" ? adminUser.id : sessionUserId;
 
   // ---------- Round-robin agent assignment ----------
   const activeAgents = await prisma.user.findMany({
@@ -280,4 +283,11 @@ export async function POST(req: Request) {
     agentBreakdown,
     errors,
   });
+  } catch (err) {
+    console.error("[registrations/commit]", err);
+    return NextResponse.json(
+      { error: err instanceof Error ? err.message : "Internal server error" },
+      { status: 500 }
+    );
+  }
 }
