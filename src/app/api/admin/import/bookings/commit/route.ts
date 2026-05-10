@@ -464,61 +464,46 @@ export async function POST(req: Request) {
   let followupsSkipped = 0;
   const followupActivityLogs: { customerId: string; userId: string; activityType: "FOLLOWUP_DATE_CHANGED"; oldValue: string | null; newValue: string; note: string }[] = [];
 
+  const todayDate = new Date();
+  todayDate.setHours(0, 0, 0, 0);
+
+  const followupCreates: { customerId: string; nextFollowupDate: Date; updatedById: string }[] = [];
+  const followupUpdates: { cid: string; finalDate: Date; oldDate: Date }[] = [];
+
   for (const [cid, importLatest] of latestInImport) {
     const overallMax = overallMaxByCustomer.get(cid);
     if (!overallMax) continue;
+    if (importLatest.getTime() !== overallMax.getTime()) { followupsSkipped++; continue; }
 
-    if (importLatest.getTime() !== overallMax.getTime()) {
-      followupsSkipped++;
-      continue;
-    }
-
-    const newDate = addDays(importLatest, followupDays);
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
-    const finalDate = maxDate(newDate, today);
-
+    const finalDate = maxDate(addDays(importLatest, followupDays), todayDate);
     const existingFollowup = followupByCustomer.get(cid);
 
     if (!existingFollowup) {
-      await prisma.followup.create({
-        data: {
-          customerId: cid,
-          nextFollowupDate: finalDate,
-          updatedById: userId,
-        },
-      });
+      followupCreates.push({ customerId: cid, nextFollowupDate: finalDate, updatedById: userId });
+      followupActivityLogs.push({ customerId: cid, userId, activityType: "FOLLOWUP_DATE_CHANGED", oldValue: null, newValue: finalDate.toISOString(), note: "Followup auto-created from new booking" });
       followupsCreated++;
-      followupActivityLogs.push({
-        customerId: cid,
-        userId,
-        activityType: "FOLLOWUP_DATE_CHANGED",
-        oldValue: null,
-        newValue: finalDate.toISOString(),
-        note: "Followup auto-created from new booking",
-      });
     } else {
-      await prisma.followup.update({
-        where: { customerId: cid },
-        data: {
-          nextFollowupDate: finalDate,
-          currentRemark: null,
-          currentNote: null,
-          lastContactedAt: null,
-          lastContactedById: null,
-          updatedById: userId,
-        },
-      });
+      followupUpdates.push({ cid, finalDate, oldDate: existingFollowup });
+      followupActivityLogs.push({ customerId: cid, userId, activityType: "FOLLOWUP_DATE_CHANGED", oldValue: existingFollowup.toISOString(), newValue: finalDate.toISOString(), note: "Followup reset by new booking import (latest booking wins)" });
       followupsUpdated++;
-      followupActivityLogs.push({
-        customerId: cid,
-        userId,
-        activityType: "FOLLOWUP_DATE_CHANGED",
-        oldValue: existingFollowup.toISOString(),
-        newValue: finalDate.toISOString(),
-        note: "Followup reset by new booking import (latest booking wins)",
-      });
     }
+  }
+
+  // Batch creates
+  if (followupCreates.length > 0) {
+    await prisma.followup.createMany({ data: followupCreates, skipDuplicates: true });
+  }
+
+  // Parallel updates in batches of 30
+  for (let i = 0; i < followupUpdates.length; i += 30) {
+    await Promise.all(
+      followupUpdates.slice(i, i + 30).map(({ cid, finalDate }) =>
+        prisma.followup.update({
+          where: { customerId: cid },
+          data: { nextFollowupDate: finalDate, currentRemark: null, currentNote: null, lastContactedAt: null, lastContactedById: null, updatedById: userId },
+        })
+      )
+    );
   }
 
   if (followupActivityLogs.length > 0) {
