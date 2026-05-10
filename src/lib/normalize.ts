@@ -54,7 +54,7 @@ export function parseFlexibleDate(input: unknown): Date | null {
     const mon = parseInt(m[2], 10);
     const year = parseInt(m[3], 10);
     if (day >= 1 && day <= 31 && mon >= 1 && mon <= 12) {
-      return new Date(year, mon - 1, day);
+      return new Date(Date.UTC(year, mon - 1, day));
     }
   }
 

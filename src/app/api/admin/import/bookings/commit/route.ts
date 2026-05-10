@@ -341,9 +341,12 @@ export async function POST(req: Request) {
     });
   }
 
+  // Filter to rows whose customer is confirmed in the map (guards against race-condition gaps)
+  const processable = toProcess.filter((p) => customerByPhone.has(p.phone));
+
   // Bulk-create bookings
   await prisma.booking.createMany({
-    data: toProcess.map((p) => ({
+    data: processable.map((p) => ({
       customerId: customerByPhone.get(p.phone)!.id,
       orderNo: p.orderNo,
       aiCallingStatus: p.aiCallingStatus,
@@ -378,7 +381,7 @@ export async function POST(req: Request) {
   });
 
   await prisma.activityLog.createMany({
-    data: toProcess.map((p) => ({
+    data: processable.map((p) => ({
       customerId: customerByPhone.get(p.phone)!.id,
       userId,
       activityType: "BOOKING_IMPORTED" as const,
