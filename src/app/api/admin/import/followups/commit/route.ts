@@ -25,7 +25,7 @@ export async function POST(request: Request) {
     const sheet = workbook.sheets.find((s) => s.sheetName === sheetName);
     if (!sheet) return NextResponse.json({ error: "Sheet not found" }, { status: 400 });
 
-    // Pre-load all agents and customers in bulk
+    // Pre-load everything in 2 parallel queries
     const [agents, allCustomers] = await Promise.all([
       prisma.user.findMany({
         where: { role: "AGENT", isActive: true, deletedAt: null },
@@ -39,7 +39,7 @@ export async function POST(request: Request) {
     const agentByName = new Map(agents.map((a) => [a.name.trim().toLowerCase(), a.id]));
     const customerByPhone = new Map(allCustomers.map((c) => [c.phone, c]));
 
-    // Parse all rows first
+    // Parse all rows in memory
     type ParsedRow = {
       customerId: string;
       currentOwnerId: string | null;
@@ -76,20 +76,17 @@ export async function POST(request: Request) {
       const remark = cleanString(getField(row, "Remarks", "remark", "Last Remark"));
       const note = cleanString(getField(row, "Detailed Remarks", "detailed remarks", "Note", "notes", "detailed_remarks"));
 
-      const nextFollowupDate = parseFlexibleDate(nextFollowupRaw) ?? new Date();
-      const newOwnerId = ownerName ? (agentByName.get(ownerName.trim().toLowerCase()) ?? null) : null;
-
       parsed.push({
         customerId: customer.id,
         currentOwnerId: customer.ownerId,
-        newOwnerId,
-        followupDate: nextFollowupDate,
+        newOwnerId: ownerName ? (agentByName.get(ownerName.trim().toLowerCase()) ?? null) : null,
+        followupDate: parseFlexibleDate(nextFollowupRaw) ?? new Date(),
         remark: remark || null,
         note: note || null,
       });
     }
 
-    // Pre-load all existing followups for matched customers
+    // Pre-load existing followups for all matched customers
     const customerIds = parsed.map((p) => p.customerId);
     const existingFollowups = await prisma.followup.findMany({
       where: { customerId: { in: customerIds } },
@@ -97,21 +94,36 @@ export async function POST(request: Request) {
     });
     const followupByCustomer = new Map(existingFollowups.map((f) => [f.customerId, f]));
 
-    // Batch owner updates (only where owner changed)
-    const ownerUpdates = parsed.filter((p) => p.newOwnerId && p.newOwnerId !== p.currentOwnerId);
-    let ownerUpdatedCount = 0;
-    for (let i = 0; i < ownerUpdates.length; i += 30) {
-      await Promise.all(
-        ownerUpdates.slice(i, i + 30).map((p) =>
-          prisma.customer.update({ where: { id: p.customerId }, data: { ownerId: p.newOwnerId } })
-        )
-      );
-      ownerUpdatedCount += ownerUpdates.slice(i, i + 30).length;
-    }
-
-    // Separate creates vs updates
     const toCreate = parsed.filter((p) => !followupByCustomer.has(p.customerId));
     const toUpdate = parsed.filter((p) => followupByCustomer.has(p.customerId));
+    const ownerChanges = parsed.filter((p) => p.newOwnerId && p.newOwnerId !== p.currentOwnerId);
+
+    const now = new Date().toISOString();
+
+    // Single bulk SQL UPDATE for all followup updates
+    if (toUpdate.length > 0) {
+      const updateData = toUpdate.map((p) => {
+        const ex = followupByCustomer.get(p.customerId)!;
+        return {
+          cid: p.customerId,
+          fd: p.followupDate.toISOString(),
+          r: p.remark || ex.currentRemark || null,
+          n: p.note || ex.currentNote || null,
+          lc: p.remark ? now : (ex.lastContactedAt?.toISOString() ?? null),
+        };
+      });
+      await prisma.$executeRaw`
+        UPDATE "Followup" f
+        SET
+          "nextFollowupDate" = (v->>'fd')::timestamptz,
+          "currentRemark"    = v->>'r',
+          "currentNote"      = v->>'n',
+          "lastContactedAt"  = (v->>'lc')::timestamptz,
+          "updatedAt"        = NOW()
+        FROM json_array_elements(${JSON.stringify(updateData)}::json) AS v
+        WHERE f."customerId" = v->>'cid'
+      `;
+    }
 
     // Bulk create new followups
     if (toCreate.length > 0) {
@@ -127,22 +139,15 @@ export async function POST(request: Request) {
       });
     }
 
-    // Parallel update existing followups in batches of 30
-    for (let i = 0; i < toUpdate.length; i += 30) {
-      await Promise.all(
-        toUpdate.slice(i, i + 30).map((p) => {
-          const existing = followupByCustomer.get(p.customerId)!;
-          return prisma.followup.update({
-            where: { customerId: p.customerId },
-            data: {
-              nextFollowupDate: p.followupDate,
-              currentRemark: p.remark || existing.currentRemark,
-              currentNote: p.note || existing.currentNote,
-              lastContactedAt: p.remark ? new Date() : existing.lastContactedAt,
-            },
-          });
-        })
-      );
+    // Single bulk SQL UPDATE for owner changes
+    if (ownerChanges.length > 0) {
+      const ownerData = ownerChanges.map((p) => ({ cid: p.customerId, oid: p.newOwnerId }));
+      await prisma.$executeRaw`
+        UPDATE "Customer" c
+        SET "ownerId" = v->>'oid', "updatedAt" = NOW()
+        FROM json_array_elements(${JSON.stringify(ownerData)}::json) AS v
+        WHERE c.id = v->>'cid'
+      `;
     }
 
     return NextResponse.json({
@@ -150,7 +155,7 @@ export async function POST(request: Request) {
       totalRows: sheet.rows.length,
       updatedCount: toUpdate.length,
       createdCount: toCreate.length,
-      ownerUpdatedCount,
+      ownerUpdatedCount: ownerChanges.length,
       skippedCount,
       errorCount: errors.length,
       errors,
