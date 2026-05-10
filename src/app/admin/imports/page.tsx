@@ -42,7 +42,7 @@ export default async function ImportsHub() {
       </div>
 
       {/* Import actions */}
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-8">
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-8">
         <Link
           href="/admin/import/registrations"
           className="bg-white p-6 rounded-lg border border-gray-200 hover:border-blue-400 hover:shadow-sm transition"
@@ -72,6 +72,23 @@ export default async function ImportsHub() {
               <h2 className="font-semibold text-gray-900">Import Bookings</h2>
               <p className="text-sm text-gray-600 mt-1">
                 Upload bookings CSV or XLSX. Customers who already have an agent keep them. Latest booking sets followup date.
+              </p>
+            </div>
+          </div>
+        </Link>
+
+        <Link
+          href="/admin/import/followups"
+          className="bg-white p-6 rounded-lg border border-gray-200 hover:border-purple-400 hover:shadow-sm transition"
+        >
+          <div className="flex items-start gap-3">
+            <div className="p-2 bg-purple-50 rounded-lg">
+              <DocumentTextIcon className="h-6 w-6 text-purple-600" />
+            </div>
+            <div>
+              <h2 className="font-semibold text-gray-900">Import Combined Followups</h2>
+              <p className="text-sm text-gray-600 mt-1">
+                Import followup dates, remarks and agent assignments from your existing spreadsheet. Run Registrations + Bookings first.
               </p>
             </div>
           </div>
