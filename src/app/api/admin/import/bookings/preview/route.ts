@@ -1,10 +1,10 @@
-﻿import { NextResponse } from "next/server";
+import { NextResponse } from "next/server";
 import { auth } from "@/auth";
 import { prisma } from "@/lib/prisma";
 import { parseFile, getField } from "@/lib/parseFile";
 import { normalizePhone, cleanString, parseFlexibleDate } from "@/lib/normalize";
 
-export const maxDuration = 300;
+export const maxDuration = 60;
 
 export async function POST(req: Request) {
   const session = await auth();

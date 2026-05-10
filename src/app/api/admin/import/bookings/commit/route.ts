@@ -4,7 +4,7 @@ import { prisma } from "@/lib/prisma";
 import { parseFile, getField } from "@/lib/parseFile";
 import { normalizePhone, parseFlexibleDate, cleanString, parseNumber } from "@/lib/normalize";
 
-export const maxDuration = 600;
+export const maxDuration = 60;
 
 const FOLLOWUP_DAYS_DEFAULT = 20;
 

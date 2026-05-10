@@ -4,7 +4,7 @@ import { prisma } from "@/lib/prisma";
 import { parseFile, getField } from "@/lib/parseFile";
 import { normalizePhone, parseFlexibleDate, cleanString } from "@/lib/normalize";
 
-export const maxDuration = 300;
+export const maxDuration = 60;
 
 export async function POST(req: Request) {
   const session = await auth();
