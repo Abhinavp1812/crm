@@ -33,11 +33,8 @@ export default function LoginPage() {
       <div className="w-full max-w-sm">
         {/* Brand header */}
         <div className="flex flex-col items-center mb-8">
-          <div className="w-12 h-12 rounded-2xl bg-gradient-to-br from-blue-600 to-indigo-600 flex items-center justify-center shadow-lg mb-4">
-            <span className="text-white text-lg font-bold tracking-tight">SL</span>
-          </div>
-          <h1 className="text-2xl font-bold text-gray-900 tracking-tight">Style Lounge</h1>
-          <p className="text-sm text-gray-500 mt-1">CRM — Sign in to continue</p>
+          <LoginLogo />
+          <p className="text-sm text-gray-500 mt-4">CRM — Sign in to continue</p>
         </div>
 
         <form
@@ -97,5 +94,27 @@ export default function LoginPage() {
         </form>
       </div>
     </div>
+  );
+}
+
+function LoginLogo() {
+  const [err, setErr] = useState(false);
+  if (err) {
+    return (
+      <div className="w-20 h-20 rounded-2xl bg-gradient-to-br from-blue-600 to-indigo-600 flex items-center justify-center shadow-xl">
+        <span className="text-white text-2xl font-bold tracking-tight">SL</span>
+      </div>
+    );
+  }
+  return (
+    // eslint-disable-next-line @next/next/no-img-element
+    <img
+      src="/logo.png"
+      alt="Style Lounge"
+      width={160}
+      height={160}
+      className="rounded-2xl shadow-xl block"
+      onError={() => setErr(true)}
+    />
   );
 }

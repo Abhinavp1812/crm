@@ -19,6 +19,7 @@ model User {
   isActive      Boolean   @default(true)
   onLeaveFrom   DateTime?
   onLeaveUntil  DateTime?
+  profilePhoto  String?
   createdAt     DateTime  @default(now())
   updatedAt     DateTime  @updatedAt
   deletedAt     DateTime?

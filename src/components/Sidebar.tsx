@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import {
   HomeIcon,
   UserGroupIcon,
@@ -15,6 +15,7 @@ import {
   ArrowRightOnRectangleIcon,
   ChevronLeftIcon,
   ChevronRightIcon,
+  UserCircleIcon,
 } from "@heroicons/react/24/outline";
 import { signOut, useSession } from "next-auth/react";
 import SelfLeaveButton from "./SelfLeaveButton";
@@ -25,6 +26,31 @@ interface NavItem {
   icon: React.ComponentType<{ className?: string }>;
 }
 
+function LogoMark({ size }: { size: number }) {
+  const [err, setErr] = useState(false);
+  if (err) {
+    return (
+      <div
+        style={{ width: size, height: size }}
+        className="rounded-lg bg-gradient-to-br from-blue-600 to-indigo-600 flex items-center justify-center flex-shrink-0"
+      >
+        <span className="text-white font-bold" style={{ fontSize: size * 0.35 }}>SL</span>
+      </div>
+    );
+  }
+  return (
+    // eslint-disable-next-line @next/next/no-img-element
+    <img
+      src="/logo.png"
+      alt="Style Lounge"
+      width={size}
+      height={size}
+      className="rounded-lg block flex-shrink-0"
+      onError={() => setErr(true)}
+    />
+  );
+}
+
 export default function Sidebar() {
   const { data: session } = useSession();
   const userName = session?.user?.name || "User";
@@ -33,12 +59,22 @@ export default function Sidebar() {
   const [collapsed, setCollapsed] = useState(false);
   const [mobileOpen, setMobileOpen] = useState(false);
 
+  // photoUpdatedAt is a timestamp stored in the JWT (just a number, never the actual image data)
+  // It changes whenever the user updates their photo, busting the browser cache
+  const photoUpdatedAt = session?.user?.photoUpdatedAt ?? 0;
+  const photoSrc = photoUpdatedAt > 0 ? `/api/profile/photo?v=${photoUpdatedAt}` : null;
+
+  const isSuperAdmin = session?.user?.id === "super-admin";
+
   const userNav: NavItem[] = [
     { label: "Followups", href: "/", icon: HomeIcon },
     { label: "Customers", href: "/customers", icon: UserGroupIcon },
   ];
   if (userRole === "AGENT") {
     userNav.push({ label: "My Stats", href: "/stats", icon: ChartBarIcon });
+  }
+  if (!isSuperAdmin) {
+    userNav.push({ label: "Profile", href: "/profile", icon: UserCircleIcon });
   }
 
   const adminNav: NavItem[] = [
@@ -77,6 +113,30 @@ export default function Sidebar() {
 
   const avatar = userName.charAt(0).toUpperCase();
 
+  const [photoErr, setPhotoErr] = useState(false);
+  useEffect(() => { setPhotoErr(false); }, [photoSrc]);
+
+  const AvatarCircle = ({ size = 8 }: { size?: number }) => {
+    if (photoSrc && !photoErr) {
+      return (
+        // eslint-disable-next-line @next/next/no-img-element
+        <img
+          src={photoSrc}
+          alt={userName}
+          width={size * 4}
+          height={size * 4}
+          className={`w-${size} h-${size} rounded-full object-cover ring-2 ring-blue-100 flex-shrink-0`}
+          onError={() => setPhotoErr(true)}
+        />
+      );
+    }
+    return (
+      <div className={`w-${size} h-${size} rounded-full bg-gradient-to-br from-blue-500 to-indigo-500 flex items-center justify-center text-white text-sm font-semibold flex-shrink-0`}>
+        {avatar}
+      </div>
+    );
+  };
+
   const sidebarContent = (
     <aside
       className={
@@ -89,10 +149,8 @@ export default function Sidebar() {
       <div className="h-14 flex items-center justify-between px-3 border-b border-gray-100 flex-shrink-0">
         {!collapsed ? (
           <>
-            <div className="flex items-center gap-2.5">
-              <div className="w-7 h-7 rounded-lg bg-gradient-to-br from-blue-600 to-indigo-600 flex items-center justify-center flex-shrink-0">
-                <span className="text-white text-xs font-bold">SL</span>
-              </div>
+            <div className="flex items-center gap-2">
+              <LogoMark size={32} />
               <span className="font-semibold text-gray-900 text-sm tracking-tight">Style Lounge</span>
             </div>
             <button
@@ -106,10 +164,10 @@ export default function Sidebar() {
         ) : (
           <button
             onClick={() => setCollapsed(false)}
-            className="mx-auto p-1.5 rounded-md text-gray-400 hover:bg-gray-100 hover:text-gray-600 transition-colors"
+            className="mx-auto"
             title="Expand"
           >
-            <ChevronRightIcon className="h-4 w-4" />
+            <LogoMark size={32} />
           </button>
         )}
       </div>
@@ -117,23 +175,32 @@ export default function Sidebar() {
       {/* User info */}
       <div className={"border-b border-gray-100 flex-shrink-0 " + (collapsed ? "py-3 flex justify-center" : "px-3 py-3")}>
         {collapsed ? (
-          <div
-            className="w-8 h-8 rounded-full bg-gradient-to-br from-blue-500 to-indigo-500 flex items-center justify-center text-white text-sm font-semibold"
-            title={userName}
-          >
-            {avatar}
-          </div>
+          isSuperAdmin ? (
+            <AvatarCircle size={8} />
+          ) : (
+            <Link href="/profile" title={userName}>
+              <AvatarCircle size={8} />
+            </Link>
+          )
         ) : (
           <>
-            <div className="flex items-center gap-2.5">
-              <div className="w-8 h-8 rounded-full bg-gradient-to-br from-blue-500 to-indigo-500 flex items-center justify-center text-white text-sm font-semibold flex-shrink-0">
-                {avatar}
+            {isSuperAdmin ? (
+              <div className="flex items-center gap-2.5">
+                <AvatarCircle size={8} />
+                <div className="min-w-0">
+                  <p className="text-sm font-semibold text-gray-900 truncate">{userName}</p>
+                  <p className="text-xs text-gray-400 uppercase tracking-wide">{userRole}</p>
+                </div>
               </div>
-              <div className="min-w-0">
-                <p className="text-sm font-semibold text-gray-900 truncate">{userName}</p>
-                <p className="text-xs text-gray-400 uppercase tracking-wide">{userRole}</p>
-              </div>
-            </div>
+            ) : (
+              <Link href="/profile" className="flex items-center gap-2.5 group">
+                <AvatarCircle size={8} />
+                <div className="min-w-0">
+                  <p className="text-sm font-semibold text-gray-900 truncate group-hover:text-blue-700 transition-colors">{userName}</p>
+                  <p className="text-xs text-gray-400 uppercase tracking-wide">{userRole}</p>
+                </div>
+              </Link>
+            )}
             {userRole === "AGENT" && (
               <div className="mt-2.5 pl-[42px]">
                 <SelfLeaveButton role={userRole} />
@@ -162,7 +229,7 @@ export default function Sidebar() {
         )}
       </nav>
 
-      {/* Sign out — always visible, never pushed off screen */}
+      {/* Sign out — always visible */}
       <div className="border-t border-gray-100 p-2 flex-shrink-0">
         <button
           onClick={() => signOut({ callbackUrl: "/login" })}

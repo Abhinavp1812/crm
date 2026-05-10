@@ -6,7 +6,7 @@ import { prisma } from "@/lib/prisma";
 export const { handlers, signIn, signOut, auth } = NextAuth({
   session: {
     strategy: "jwt",
-    maxAge: 30 * 24 * 60 * 60, // 30 days (your locked spec)
+    maxAge: 30 * 24 * 60 * 60, // 30 days
   },
   pages: { signIn: "/login" },
   providers: [
@@ -32,13 +32,11 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
 
         const ok = await bcrypt.compare(password, user.passwordHash);
         if (!ok) return null;
-        // If user was marked on leave, bring them back when they successfully login
+
         if (user.onLeaveFrom || user.onLeaveUntil) {
           try {
             await prisma.user.update({ where: { id: user.id }, data: { onLeaveFrom: null, onLeaveUntil: null } });
-          } catch {
-            // ignore update errors for login
-          }
+          } catch { /* ignore */ }
         }
 
         return {
@@ -46,22 +44,48 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
           email: user.email,
           name: user.name,
           role: user.role,
+          // photoUpdatedAt lets the client build a cache-busting URL for /api/profile/photo
+          // We never store the actual photo data in the JWT — that causes HTTP 431
+          photoUpdatedAt: user.updatedAt.getTime(),
         };
       },
     }),
   ],
   callbacks: {
-    async jwt({ token, user }) {
+    async jwt({ token, user, trigger }) {
       if (user) {
         token.uid = user.id;
         token.role = user.role;
+        token.photoUpdatedAt = (user as { photoUpdatedAt?: number }).photoUpdatedAt ?? 0;
       }
+
+      // Re-sync name + photoUpdatedAt from DB when:
+      // 1. trigger === "update" — user just saved their profile
+      // 2. photoUpdatedAt is missing — old session that pre-dates this field
+      const needsSync =
+        (trigger === "update" || token.photoUpdatedAt === undefined) &&
+        token.uid &&
+        token.uid !== "super-admin";
+
+      if (needsSync) {
+        const dbUser = await prisma.user.findUnique({
+          where: { id: token.uid as string },
+          select: { name: true, updatedAt: true },
+        });
+        if (dbUser) {
+          token.name = dbUser.name;
+          token.photoUpdatedAt = dbUser.updatedAt.getTime();
+        }
+      }
+
       return token;
     },
     async session({ session, token }) {
       if (session.user) {
         session.user.id = token.uid as string;
         session.user.role = token.role as "ADMIN" | "AGENT";
+        if (token.name) session.user.name = token.name as string;
+        session.user.photoUpdatedAt = token.photoUpdatedAt as number ?? 0;
       }
       return session;
     },

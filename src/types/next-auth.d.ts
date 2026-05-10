@@ -12,6 +12,7 @@ declare module "next-auth" {
       email: string;
       name: string;
       role: "ADMIN" | "AGENT";
+      photoUpdatedAt?: number; // Unix ms — used as cache-bust param for /api/profile/photo
     };
   }
 }
@@ -20,5 +21,6 @@ declare module "next-auth/jwt" {
   interface JWT {
     uid: string;
     role: "ADMIN" | "AGENT";
+    photoUpdatedAt?: number;
   }
 }
