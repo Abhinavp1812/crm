@@ -1,6 +1,7 @@
 ﻿"use client";
 
 import { useState } from "react";
+import * as XLSX from "xlsx";
 import Layout from "@/components/Layout";
 import Link from "next/link";
 
@@ -17,7 +18,15 @@ interface CommitResponse {
   followupsCreated?: number;
   followupsUpdated?: number;
   followupsSkipped?: number;
-  errors: { row: number; reason: string }[];
+  errors: { row: number; reason: string; data: Record<string, unknown> }[];
+}
+
+function downloadErrorReport(errors: CommitResponse["errors"], filename: string) {
+  const rows = errors.map((e) => ({ Row: e.row, Reason: e.reason, ...e.data }));
+  const ws = XLSX.utils.json_to_sheet(rows);
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, "Errors");
+  XLSX.writeFile(wb, filename);
 }
 
 export default function BookingsImportPage() {
@@ -154,13 +163,21 @@ export default function BookingsImportPage() {
             </div>
           )}
 
-          <div className="flex gap-2">
+          <div className="flex gap-2 flex-wrap">
             <button
               onClick={() => { setResult(null); setFile(null); setSheetName(null); setSheetOptions([]); }}
               className="px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700"
             >
               Import another file
             </button>
+            {result.errors.length > 0 && (
+              <button
+                onClick={() => downloadErrorReport(result.errors, `errors-${file?.name ?? "import"}.xlsx`)}
+                className="px-4 py-2 bg-red-50 text-red-700 border border-red-200 rounded-md hover:bg-red-100"
+              >
+                Download Error Report ({result.errorCount} rows)
+              </button>
+            )}
           </div>
         </div>
       )}

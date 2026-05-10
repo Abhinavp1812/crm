@@ -20,6 +20,13 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
         const password = credentials?.password as string;
         if (!email || !password) return null;
 
+        // Super admin — lives only in env, never in DB
+        const superEmail = process.env.SUPER_ADMIN_EMAIL?.toLowerCase().trim();
+        const superPassword = process.env.SUPER_ADMIN_PASSWORD;
+        if (superEmail && superPassword && email === superEmail && password === superPassword) {
+          return { id: "super-admin", email: superEmail, name: "Super Admin", role: "ADMIN" };
+        }
+
         const user = await prisma.user.findUnique({ where: { email } });
         if (!user || !user.isActive) return null;
 

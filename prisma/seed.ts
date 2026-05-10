@@ -39,9 +39,10 @@ const DEFAULT_SETTINGS: Record<string, string> = {
 };
 
 async function main() {
-  // Admin user - read from environment with sensible defaults
-  const adminEmail = process.env.SEED_ADMIN_EMAIL || "admin@crm.local";
-  const adminPassword = process.env.SEED_ADMIN_PASSWORD || "admin123";
+  // Admin user - must be set in .env, no fallbacks
+  const adminEmail = process.env.SEED_ADMIN_EMAIL;
+  const adminPassword = process.env.SEED_ADMIN_PASSWORD;
+  if (!adminEmail || !adminPassword) throw new Error("SEED_ADMIN_EMAIL and SEED_ADMIN_PASSWORD must be set in .env");
   const adminHash = await bcrypt.hash(adminPassword, 10);
   await prisma.user.upsert({
     where: { email: adminEmail },
@@ -55,25 +56,7 @@ async function main() {
   });
   console.log(`✅ Admin seeded: ${adminEmail} (password: from env)`);
 
-  // Default agents - names and password can be supplied via env
-  const agentsEnv = process.env.SEED_AGENT_NAMES || "Lakshita,Sonia,Shivani,Soumya";
-  const agents = agentsEnv.split(",").map((s) => s.trim()).filter(Boolean);
-  const agentPassword = process.env.SEED_AGENT_PASSWORD || "agent123";
-  const agentHash = await bcrypt.hash(agentPassword, 10);
-  for (const name of agents) {
-    const email = `${name.toLowerCase()}@crm.local`;
-    await prisma.user.upsert({
-      where: { email },
-      update: {},
-      create: {
-        email,
-        name,
-        passwordHash: agentHash,
-        role: "AGENT",
-      },
-    });
-  }
-  console.log(`✅ ${agents.length} agents seeded (password: from env)`);
+  console.log("ℹ️  Agents are created by admin via the Team page — none seeded here.");
 
   // Remark options with smart-default rules
   for (let i = 0; i < REMARK_OPTIONS.length; i++) {

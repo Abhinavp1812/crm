@@ -14,13 +14,8 @@ import {
   XMarkIcon,
   ArrowRightOnRectangleIcon,
 } from "@heroicons/react/24/outline";
-import { signOut } from "next-auth/react";
+import { signOut, useSession } from "next-auth/react";
 import SelfLeaveButton from "./SelfLeaveButton";
-
-interface SidebarProps {
-  userName: string;
-  userRole: "ADMIN" | "AGENT";
-}
 
 interface NavItem {
   label: string;
@@ -28,7 +23,10 @@ interface NavItem {
   icon: React.ComponentType<{ className?: string }>;
 }
 
-export default function Sidebar({ userName, userRole }: SidebarProps) {
+export default function Sidebar() {
+  const { data: session } = useSession();
+  const userName = session?.user?.name || "User";
+  const userRole = session?.user?.role;
   const pathname = usePathname();
   const [collapsed, setCollapsed] = useState(false);
   const [mobileOpen, setMobileOpen] = useState(false);

@@ -21,7 +21,7 @@ export async function POST(req: Request) {
     return NextResponse.json({
       filename: file.name,
       sheets: wb.sheets.map((s) => ({
-        name: s.sheetName,
+        sheetName: s.sheetName,
         headers: s.headers,
         rowCount: s.rows.length,
       })),
