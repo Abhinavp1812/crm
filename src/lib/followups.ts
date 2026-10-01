@@ -24,6 +24,7 @@ export interface FollowupRow {
   city: string | null;
   customerType: "NEW_REGISTRATION" | "CUSTOMER";
   doNotContact: boolean;
+  leadSource: string | null;
   nextFollowupDate: Date;
   effectiveFollowupDate: Date;
   currentRemark: string | null;
@@ -387,6 +388,7 @@ export async function getTodayFollowups(
         city: true,
         customerType: true,
         doNotContact: true,
+        leadSource: true,
         owner: { select: { name: true } },
         bookings: {
           orderBy: { bookingDate: "desc" as const },
@@ -528,6 +530,7 @@ export async function getTodayFollowups(
       city: f.customer.city,
       customerType: f.customer.customerType,
       doNotContact: f.customer.doNotContact,
+      leadSource: f.customer.leadSource,
       nextFollowupDate: f.nextFollowupDate,
       effectiveFollowupDate,
       currentRemark: f.currentRemark,
@@ -662,6 +665,14 @@ export async function getActiveRemarkOptions() {
   });
 }
 
+export async function getActiveLeadSources() {
+  return prisma.leadSourceOption.findMany({
+    where: { isActive: true },
+    orderBy: { sortOrder: "asc" },
+    select: { label: true },
+  });
+}
+
 // === Admin helpers (unchanged signatures, kept) ===
 export interface AdminCustomerRow {
   id: string;
@@ -672,6 +683,7 @@ export interface AdminCustomerRow {
   doNotContact: boolean;
   ownerName: string | null;
   ownerId: string | null;
+  leadSource: string | null;
   followupDate: Date | null;
   currentRemark: string | null;
   currentNote: string | null;
@@ -689,6 +701,7 @@ export interface AdminCustomerFilter {
   followupState?: "active" | "closed" | "dnc" | "contacted" | "all";
   remark?: string;
   leadTemperature?: "HOT" | "WARM" | "COLD";
+  leadSource?: string;
 }
 
 export async function getAdminCustomers(filter: AdminCustomerFilter, page = 1, pageSize = 50) {
@@ -703,6 +716,7 @@ export async function getAdminCustomers(filter: AdminCustomerFilter, page = 1, p
     ];
   }
   if (filter.ownerId) where.ownerId = filter.ownerId;
+  if (filter.leadSource) where.leadSource = filter.leadSource;
   if (filter.customerType && filter.customerType !== "all") where.customerType = filter.customerType;
   if (filter.followupState === "dnc") where.doNotContact = true;
   if (filter.followupState === "closed") {
@@ -754,6 +768,7 @@ export async function getAdminCustomers(filter: AdminCustomerFilter, page = 1, p
   const rows: AdminCustomerRow[] = customers.map((c) => ({
     id: c.id, name: c.name, phone: c.phone, city: c.city, customerType: c.customerType,
     doNotContact: c.doNotContact, ownerName: c.owner?.name || null, ownerId: c.ownerId,
+    leadSource: c.leadSource,
     followupDate: c.followup?.nextFollowupDate || null,
     currentRemark: c.followup?.currentRemark || null,
     currentNote: c.followup?.currentNote || null,

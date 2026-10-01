@@ -15,6 +15,19 @@ type UserRow = {
 
 type BalancePlanRow = { agentId: string; agentName: string; current: number; target: number; delta: number };
 
+/** Short label for how long an agent's current leave runs, e.g. "3 days left" or "since 5 days ago (open-ended)". */
+function leaveDaysLabel(u: UserRow): string | null {
+  if (!u.onLeaveNow || !u.onLeaveFrom) return null;
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  if (!u.onLeaveUntil) {
+    const since = Math.max(0, Math.round((today.getTime() - new Date(u.onLeaveFrom).getTime()) / 86400000));
+    return since <= 0 ? "open-ended" : since + "d so far, open-ended";
+  }
+  const left = Math.round((new Date(u.onLeaveUntil).getTime() - today.getTime()) / 86400000) + 1;
+  return Math.max(0, left) + "d left";
+}
+
 export default function TeamManager() {
   const [users, setUsers] = useState<UserRow[]>([]);
   const [loading, setLoading] = useState(false);
@@ -260,6 +273,7 @@ export default function TeamManager() {
                 <span className={"text-xs font-semibold px-2 py-0.5 rounded-full border " + (u.onLeaveNow ? "bg-amber-50 text-amber-700 border-amber-200" : "bg-emerald-50 text-emerald-700 border-emerald-200")}>
                   {u.onLeaveNow ? "On Leave" : "Active"}
                 </span>
+                {leaveDaysLabel(u) && <span className="text-[11px] text-amber-600">{leaveDaysLabel(u)}</span>}
                 <span className="text-xs text-slate-500">{u.customersOwned} customers</span>
               </div>
             </div>
@@ -305,6 +319,7 @@ export default function TeamManager() {
                   <span className={"text-xs font-semibold px-2 py-0.5 rounded-full border " + (u.onLeaveNow ? "bg-amber-50 text-amber-700 border-amber-200" : "bg-emerald-50 text-emerald-700 border-emerald-200")}>
                     {u.onLeaveNow ? "On Leave" : "Active"}
                   </span>
+                  {leaveDaysLabel(u) && <span className="ml-1.5 text-[11px] text-amber-600">{leaveDaysLabel(u)}</span>}
                 </td>
                 <td className="px-4 py-3 text-right">
                   <div className="flex items-center justify-end gap-3">

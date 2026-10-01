@@ -5,6 +5,7 @@ import {
   getAdminCustomers,
   getAllUsersForFilter,
   getActiveRemarkOptions,
+  getActiveLeadSources,
   formatPhone,
   whatsappLink,
   telLink,
@@ -29,6 +30,7 @@ export default async function AdminCustomersPage({
     followupState?: string;
     remark?: string;
     leadTemperature?: string;
+    leadSource?: string;
   }>;
 }) {
   const session = await auth();
@@ -44,12 +46,14 @@ export default async function AdminCustomersPage({
     followupState: (params.followupState as "active" | "closed" | "dnc" | "contacted" | "all") || "all",
     remark: params.remark || undefined,
     leadTemperature: (params.leadTemperature as "HOT" | "WARM" | "COLD") || undefined,
+    leadSource: params.leadSource || undefined,
   };
 
-  const [{ rows, total }, users, remarkOptions] = await Promise.all([
+  const [{ rows, total }, users, remarkOptions, leadSources] = await Promise.all([
     getAdminCustomers(filter, page, PAGE_SIZE),
     getAllUsersForFilter(),
     getActiveRemarkOptions(),
+    getActiveLeadSources(),
   ]);
 
   const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE));
@@ -62,6 +66,7 @@ export default async function AdminCustomersPage({
       followupState: filter.followupState !== "all" ? filter.followupState : undefined,
       remark: filter.remark,
       leadTemperature: filter.leadTemperature,
+      leadSource: filter.leadSource,
       ...overrides,
     };
     const qs = Object.entries(merged)
@@ -143,7 +148,17 @@ export default async function AdminCustomersPage({
               <option value="WARM">Warm</option>
               <option value="COLD">Cold</option>
             </select>
-            <div className="md:col-span-3 flex gap-2 justify-end">
+            <select
+              name="leadSource"
+              defaultValue={filter.leadSource || ""}
+              className="border rounded px-2 py-1.5 text-sm"
+            >
+              <option value="">Any lead source</option>
+              {leadSources.map((s) => (
+                <option key={s.label} value={s.label}>{s.label}</option>
+              ))}
+            </select>
+            <div className="md:col-span-5 flex gap-2 justify-end">
               <Link
                 href="/admin/customers"
                 className="px-3 py-1.5 text-sm bg-gray-100 hover:bg-gray-200 rounded"
@@ -177,6 +192,7 @@ export default async function AdminCustomersPage({
                 currentRemark: c.currentRemark,
                 currentNote: c.currentNote,
                 leadTemperature: c.leadTemperature,
+                leadSource: c.leadSource,
                 followupText: c.followupDate ? formatDateIN(c.followupDate) : "-",
                 lastContactText: c.lastContactedAt ? formatDateIN(c.lastContactedAt) : "Never",
                 totalActivities: c.totalActivities,

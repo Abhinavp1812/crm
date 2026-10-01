@@ -2,7 +2,7 @@ import { auth } from "@/auth";
 import { redirect, notFound } from "next/navigation";
 import Link from "next/link";
 import { prisma } from "@/lib/prisma";
-import { formatPhone, whatsappLink, telLink, getActiveRemarkOptions } from "@/lib/followups";
+import { formatPhone, whatsappLink, telLink, getActiveRemarkOptions, getActiveLeadSources } from "@/lib/followups";
 import { CustomerTypeBadge, LeadTemperatureBadge } from "@/components/StatusBadge";
 import TopNav from "@/components/TopNav";
 import FollowupEditButton from "@/components/FollowupEditButton";
@@ -21,7 +21,7 @@ export default async function CustomerPage({ params }: { params: Promise<{ id: s
   const { id } = await params;
   const isAdmin = session.user.role === "ADMIN";
 
-  const [customer, remarkOptions, agents] = await Promise.all([
+  const [customer, remarkOptions, leadSources, agents] = await Promise.all([
     prisma.customer.findUnique({
       where: { id },
       include: {
@@ -33,10 +33,12 @@ export default async function CustomerPage({ params }: { params: Promise<{ id: s
       },
     }),
     getActiveRemarkOptions(),
+    getActiveLeadSources(),
     isAdmin
       ? prisma.user.findMany({ where: { role: "AGENT", deletedAt: null }, select: { id: true, name: true }, orderBy: { name: "asc" } })
       : Promise.resolve([] as { id: string; name: string }[]),
   ]);
+  const leadSourceOptions = leadSources.map((s) => s.label);
 
   if (!customer) notFound();
 
@@ -103,6 +105,11 @@ export default async function CustomerPage({ params }: { params: Promise<{ id: s
                 {customer.address && <p className="text-sm text-slate-500 mt-1">{customer.address}</p>}
                 <p className="text-xs text-slate-400 mt-2">
                   Owner: <span className="text-slate-600 font-medium">{customer.owner?.name || "-"}</span>
+                  {customer.leadSource && (
+                    <span className="ml-3">
+                      Source: <span className="text-slate-600 font-medium">{customer.leadSource}</span>
+                    </span>
+                  )}
                   {isAdmin && agents.length > 0 && (
                     <ReassignCustomerButton
                       customerId={customer.id}
@@ -130,8 +137,10 @@ export default async function CustomerPage({ params }: { params: Promise<{ id: s
                       currentRemark={customer.followup?.currentRemark || null}
                       currentNote={customer.followup?.currentNote || null}
                       currentLeadTemperature={customer.followup?.leadTemperature || null}
+                      currentLeadSource={customer.leadSource}
                       currentFollowupDate={followupIso}
                       remarkOptions={remarkOptions}
+                      leadSourceOptions={leadSourceOptions}
                     />
                   )}
                 </div>

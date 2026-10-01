@@ -44,6 +44,12 @@ export async function PATCH(req: Request) {
     await prisma.$transaction(async (tx) => {
       await tx.user.update({ where: { id }, data: { onLeaveFrom: fromDate, onLeaveUntil: untilDate } });
 
+      if (fromDate) {
+        await tx.leaveRecord.create({
+          data: { userId: id, startDate: fromDate, endDate: untilDate, createdById: session.user.id === "super-admin" ? null : session.user.id },
+        });
+      }
+
       // If both from and until provided, shift followups that fall within the leave window to the day after 'until' (return date)
       if (fromDate && untilDate) {
         // start = UTC midnight of fromDate

@@ -17,8 +17,10 @@ interface Props {
   currentRemark: string | null;
   currentNote: string | null;
   currentLeadTemperature?: LeadTemperature | null;
+  currentLeadSource?: string | null;
   currentFollowupDate: string; // YYYY-MM-DD
   remarkOptions: RemarkOption[];
+  leadSourceOptions?: string[];
   onClose?: () => void;
 }
 
@@ -28,13 +30,16 @@ export default function FollowupEditor({
   currentRemark,
   currentNote,
   currentLeadTemperature,
+  currentLeadSource,
   currentFollowupDate,
   remarkOptions,
+  leadSourceOptions = [],
   onClose,
 }: Props) {
   const router = useRouter();
   const [remark, setRemark] = useState(currentRemark || "");
   const [leadTemperature, setLeadTemperature] = useState<LeadTemperature | "">(currentLeadTemperature || "");
+  const [leadSource, setLeadSource] = useState(currentLeadSource || "");
   const [note, setNote] = useState(currentNote || "");
   function toLocalIsoFromAny(input: string) {
     try {
@@ -111,6 +116,7 @@ export default function FollowupEditor({
           customerId,
           remark,
           leadTemperature,
+          leadSource: leadSource || undefined,
           note: note || undefined,
           nextFollowupDate:
             !effectiveDnc && !isCloser && nextDate ? nextDate : undefined,
@@ -208,6 +214,25 @@ export default function FollowupEditor({
                 {r.label}
                 {r.autoFlagDnc ? " (auto-DNC)" : ""}
                 {r.closesFollowup ? " (closes followup)" : ""}
+              </option>
+            ))}
+          </select>
+        </div>
+
+        <div>
+          <label className="block text-xs font-semibold text-slate-600 uppercase tracking-wide mb-1.5">
+            Lead Source <span className="font-normal text-slate-400">(optional)</span>
+          </label>
+          <select
+            value={leadSource}
+            onChange={(e) => setLeadSource(e.target.value)}
+            className="w-full border border-gray-300 rounded-lg px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+            disabled={saving}
+          >
+            <option value="">— Not set —</option>
+            {leadSourceOptions.map((label) => (
+              <option key={label} value={label}>
+                {label}
               </option>
             ))}
           </select>

@@ -15,8 +15,10 @@ interface Props {
   currentRemark: string | null;
   currentNote: string | null;
   currentLeadTemperature?: "HOT" | "WARM" | "COLD" | null;
+  currentLeadSource?: string | null;
   currentFollowupDate: string;
   remarkOptions: RemarkOption[];
+  leadSourceOptions?: string[];
 }
 
 export default function FollowupEditButton(props: Props) {

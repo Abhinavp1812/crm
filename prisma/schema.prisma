@@ -27,6 +27,25 @@ model User {
   ownedCustomers Customer[]      @relation("CustomerOwner")
   activities     ActivityLog[]
   imports        ImportHistory[]
+  leaveRecords   LeaveRecord[]
+}
+
+// =================================================================
+// LEAVE RECORDS — history of every leave period an agent has taken.
+// User.onLeaveFrom/onLeaveUntil only ever holds the CURRENT window (and is
+// cleared on next login) - this is the durable log behind it, so leave can
+// be tracked over time instead of only showing the one active period.
+// =================================================================
+model LeaveRecord {
+  id          String    @id @default(cuid())
+  userId      String
+  user        User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  startDate   DateTime
+  endDate     DateTime?                      // null = open-ended, no return date set yet
+  createdAt   DateTime  @default(now())
+  createdById String?                        // who set it - the agent themself, or an admin
+
+  @@index([userId, startDate])
 }
 
 enum Role {
@@ -47,6 +66,7 @@ model Customer {
   sector         String?
   customerIdExt  String?                        // your "Customer ID" from registration sheet
   customerType   CustomerType  @default(NEW_REGISTRATION)
+  leadSource     String?                        // which campaign/channel this lead came from, e.g. "Pedicure Campaign"
   ownerId        String?
   owner          User?         @relation("CustomerOwner", fields: [ownerId], references: [id])
 
@@ -71,6 +91,7 @@ model Customer {
   @@index([ownerId])
   @@index([customerType])
   @@index([doNotContact])
+  @@index([leadSource])
 }
 
 enum CustomerType {
@@ -235,6 +256,17 @@ model RemarkOption {
   closesFollowup   Boolean  @default(false)   // true for "Booked", "Service taken"
 
   createdAt       DateTime @default(now())
+}
+
+// =================================================================
+// LEAD SOURCE OPTIONS — the "Lead Source" dropdown, editable from admin UI
+// =================================================================
+model LeadSourceOption {
+  id        String   @id @default(cuid())
+  label     String   @unique
+  sortOrder Int      @default(0)
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now())
 }
 
 // =================================================================

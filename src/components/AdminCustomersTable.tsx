@@ -17,6 +17,7 @@ export interface AdminCustomerClientRow {
   currentRemark: string | null;
   currentNote: string | null;
   leadTemperature: "HOT" | "WARM" | "COLD" | null;
+  leadSource: string | null;
   followupText: string;
   lastContactText: string;
   totalActivities: number;
@@ -168,6 +169,7 @@ export default function AdminCustomersTable({
               <th className="px-3 py-3">City</th>
               <th className="px-3 py-3">Owner</th>
               <th className="px-3 py-3">Temp</th>
+              <th className="px-3 py-3">Source</th>
               <th className="px-3 py-3">Current State</th>
               <th className="px-3 py-3">Followup Date</th>
               <th className="px-3 py-3">Activities</th>
@@ -201,6 +203,7 @@ export default function AdminCustomersTable({
                   <td className="px-3 py-3 text-gray-600">{c.city ?? "-"}</td>
                   <td className="px-3 py-3 text-gray-600">{c.ownerName ?? "-"}</td>
                   <td className="px-3 py-3"><LeadTemperatureBadge temperature={c.leadTemperature} /></td>
+                  <td className="px-3 py-3 text-gray-600">{c.leadSource ?? "-"}</td>
                   <td className="px-3 py-3 text-gray-700 max-w-xs">
                     {c.currentRemark ? (
                       <div>

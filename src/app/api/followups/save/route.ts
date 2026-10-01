@@ -13,6 +13,7 @@ export async function POST(req: Request) {
     customerId?: string;
     remark?: string;
     leadTemperature?: string;
+    leadSource?: string;
     note?: string;
     nextFollowupDate?: string; // ISO date string
     flagDnc?: boolean;
@@ -24,7 +25,7 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: "Invalid JSON body" }, { status: 400 });
   }
 
-  const { customerId, remark, leadTemperature, note, nextFollowupDate, flagDnc, dncReason } = body;
+  const { customerId, remark, leadTemperature, leadSource, note, nextFollowupDate, flagDnc, dncReason } = body;
   if (!customerId) {
     return NextResponse.json({ error: "Missing customerId" }, { status: 400 });
   }
@@ -119,7 +120,13 @@ export async function POST(req: Request) {
       });
     }
 
-    // 2. Apply DNC if requested
+    // 2. Record the lead source if the agent set/changed one - a property of the
+    // customer itself, not the followup, so it survives even a closing remark.
+    if (leadSource && leadSource !== customer.leadSource) {
+      await tx.customer.update({ where: { id: customerId }, data: { leadSource } });
+    }
+
+    // 2b. Apply DNC if requested
     if (shouldFlagDnc && !customer.doNotContact) {
       await tx.customer.update({
         where: { id: customerId },

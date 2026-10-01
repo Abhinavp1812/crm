@@ -37,6 +37,12 @@ export async function POST(req: Request) {
   await prisma.$transaction(async (tx) => {
     await tx.user.update({ where: { id: session.user.id }, data: { onLeaveFrom: fromDate, onLeaveUntil: untilDate } });
 
+    if (fromDate) {
+      await tx.leaveRecord.create({
+        data: { userId: session.user.id, startDate: fromDate, endDate: untilDate, createdById: session.user.id },
+      });
+    }
+
     if (fromDate && untilDate) {
       const start = new Date(fromDate);
       start.setUTCHours(0, 0, 0, 0);

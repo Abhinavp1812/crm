@@ -5,6 +5,7 @@ import {
   getFollowupCounts,
   getFilteredCount,
   getActiveRemarkOptions,
+  getActiveLeadSources,
   formatPhone,
   whatsappLink,
   telLink,
@@ -42,12 +43,14 @@ export default async function HomePage({
   const isAdmin = session.user.role === "ADMIN";
   const scope = { userId: isAdmin ? null : session.user.id };
 
-  const [followups, counts, filteredCount, remarkOptions] = await Promise.all([
+  const [followups, counts, filteredCount, remarkOptions, leadSources] = await Promise.all([
     getTodayFollowups(scope, page, PAGE_SIZE, filter),
     getFollowupCounts(scope),
     getFilteredCount(scope, filter),
     getActiveRemarkOptions(),
+    getActiveLeadSources(),
   ]);
+  const leadSourceOptions = leadSources.map((s) => s.label);
 
   const totalPages = Math.max(1, Math.ceil(filteredCount / PAGE_SIZE));
 
@@ -89,7 +92,7 @@ export default async function HomePage({
           {/* Mobile card list */}
           <div className="md:hidden space-y-3">
             {followups.map((f) => (
-              <FollowupCard key={f.customerId} f={f} remarkOptions={remarkOptions} showOwner={isAdmin} />
+              <FollowupCard key={f.customerId} f={f} remarkOptions={remarkOptions} leadSourceOptions={leadSourceOptions} showOwner={isAdmin} />
             ))}
           </div>
 
@@ -114,7 +117,7 @@ export default async function HomePage({
                 </thead>
                 <tbody className="divide-y divide-gray-100">
                   {followups.map((f) => (
-                    <FollowupRow key={f.customerId} f={f} remarkOptions={remarkOptions} showOwner={isAdmin} />
+                    <FollowupRow key={f.customerId} f={f} remarkOptions={remarkOptions} leadSourceOptions={leadSourceOptions} showOwner={isAdmin} />
                   ))}
                 </tbody>
               </table>
@@ -239,10 +242,12 @@ function BookingFlavorBadge({ flavor }: { flavor: BookingFlavor }) {
 function FollowupRow({
   f,
   remarkOptions,
+  leadSourceOptions,
   showOwner,
 }: {
   f: FollowupData;
   remarkOptions: RemarkOption[];
+  leadSourceOptions: string[];
   showOwner: boolean;
 }) {
   const lastBookingText = f.lastBookingDate ? formatDateIN(f.lastBookingDate) : "-";
@@ -305,8 +310,10 @@ function FollowupRow({
             currentRemark={f.currentRemark}
             currentNote={f.currentNote}
             currentLeadTemperature={f.leadTemperature}
+            currentLeadSource={f.leadSource}
             currentFollowupDate={followupIso}
             remarkOptions={remarkOptions}
+            leadSourceOptions={leadSourceOptions}
           />
           <Link href={"/customers/" + f.customerId} className="inline-flex items-center justify-center px-2.5 h-7 rounded-lg bg-slate-100 text-slate-600 hover:bg-slate-200 text-xs font-medium transition-colors">Open</Link>
         </div>
@@ -320,10 +327,12 @@ function FollowupRow({
 function FollowupCard({
   f,
   remarkOptions,
+  leadSourceOptions,
   showOwner,
 }: {
   f: FollowupData;
   remarkOptions: RemarkOption[];
+  leadSourceOptions: string[];
   showOwner: boolean;
 }) {
   const followupIso = toLocalIso(new Date(f.nextFollowupDate));
@@ -390,8 +399,10 @@ function FollowupCard({
           currentRemark={f.currentRemark}
           currentNote={f.currentNote}
           currentLeadTemperature={f.leadTemperature}
+          currentLeadSource={f.leadSource}
           currentFollowupDate={followupIso}
           remarkOptions={remarkOptions}
+          leadSourceOptions={leadSourceOptions}
         />
         <Link href={"/customers/" + f.customerId} className="inline-flex items-center justify-center h-9 px-3 rounded-lg bg-white border border-gray-200 text-slate-600 hover:bg-slate-50 text-sm font-medium transition-colors">
           Open

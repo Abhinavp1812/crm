@@ -13,6 +13,7 @@ import {
   QuestionMarkCircleIcon,
   DocumentArrowDownIcon,
   CalendarDaysIcon,
+  TagIcon,
 } from "@heroicons/react/24/outline";
 
 export default async function AdminPage() {
@@ -68,6 +69,13 @@ export default async function AdminPage() {
           color="blue"
           title="Tracker"
           description="Registrations and bookings in a date range - click a count to see the customers"
+        />
+        <AdminTile
+          href="/admin/lead-sources"
+          icon={TagIcon}
+          color="amber"
+          title="Lead Sources"
+          description="Manage the campaign/channel dropdown agents tag customers with"
         />
         <AdminTile
           href="/admin/reassignment-log"
